@@ -25,6 +25,11 @@ Current Trunk
 - Remove `MODULARIZE_INSTANCE` build option (#11037). This was a seldom used
   option that was complicating the logic for `MODULARIZE`. Module instances can
   be created by using `MODULARIZE` and calling the factory function explicitly. 
+- System libraries such as libc and libc++ are now included by default at
+  link time rather than selecitvly included based on the symbols uses in the
+  input object files.  For small programs that don't use any system libraries
+  this would result in slightly slower build time with the old fastcomp
+  backend.  In order to exclude these libraries build with `-nostdlib`.
 
 1.39.14: 05/01/2020
 -------------------
