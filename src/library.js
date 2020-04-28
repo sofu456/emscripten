@@ -4341,7 +4341,7 @@ LibraryManager.library = {
   },
 
   emscripten_has_asyncify: function() {
-    return {{{ ASYNCIFY || EMTERPRETIFY_ASYNC }}};
+    return {{{ ASYNCIFY }}};
   },
 
   emscripten_debugger: function() {

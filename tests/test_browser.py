@@ -821,10 +821,7 @@ window.close = function() {
     self.btest('sdl_canvas_alpha.c', args=['--pre-js', 'flag_0.js', '-lSDL', '-lGL'], reference='sdl_canvas_alpha_flag_0.png', reference_slack=12)
 
   def get_async_args(self):
-    if self.is_wasm_backend():
-      return ['-s', 'ASYNCIFY']
-    else:
-      return ['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1']
+    return ['-s', 'ASYNCIFY']
 
   def test_sdl_key(self):
     for delay in [0, 1]:
@@ -2707,9 +2704,6 @@ Module["preRun"].push(function () {
   def test_wget_data(self):
     create_test_file('test.txt', 'emscripten')
     self.btest(path_from_root('tests', 'test_wget_data.c'), expected='1', args=['-O2', '-g2'] + self.get_async_args())
-    # in the emterpreter, check the special assertions mode as well
-    if not self.is_wasm_backend():
-      self.btest(path_from_root('tests', 'test_wget_data.c'), expected='1', args=['-O2', '-g2', '-s', 'ASSERTIONS=1'] + self.get_async_args())
 
   def test_locate_file(self):
     for wasm in ([0, 1] if not self.is_wasm_backend() else [1]):
@@ -3259,7 +3253,6 @@ window.close = function() {
       print(opts)
       self.btest('browser/async.cpp', '1', args=['-O' + str(opts), '-g2'] + self.get_async_args())
 
-  @no_fastcomp('emterpretify is not compatible with threads')
   @requires_threads
   def test_async_in_pthread(self):
     self.btest('browser/async.cpp', '1', args=self.get_async_args() + ['-s', 'USE_PTHREADS=1', '-s', 'PROXY_TO_PTHREAD=1', '-g'])
@@ -3289,41 +3282,10 @@ window.close = function() {
   def test_async_longjmp(self, args):
     self.btest('browser/async_longjmp.cpp', '2', args=args + self.get_async_args())
 
-  @no_wasm_backend('emterpretify, with emterpreter-specific error logging')
-  def test_emterpreter_async_bad(self):
-    for opts in [0, 3]:
-      print(opts)
-      self.btest('emterpreter_async_bad.cpp', '1', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1', '-O' + str(opts), '-s', 'EMTERPRETIFY_BLACKLIST=["_middle"]', '-s', 'ASSERTIONS=1'])
-
-  @no_wasm_backend('emterpretify, with emterpreter-specific error logging')
-  def test_emterpreter_async_bad_2(self):
-    for opts in [0, 3]:
-      for assertions in [0, 1]:
-        # without assertions, we end up continuing to run more non-emterpreted code in this testcase, returning 1
-        # with assertions, we hit the emterpreter-async assertion on that, and report a  clear error
-        expected = '2' if assertions else '1'
-        print(opts, assertions, expected)
-        self.btest('emterpreter_async_bad_2.cpp', expected, args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1', '-O' + str(opts), '-s', 'EMTERPRETIFY_BLACKLIST=["_middle"]', '-s', 'ASSERTIONS=%s' % assertions, '-g'])
-
   def test_async_mainloop(self):
     for opts in [0, 3]:
       print(opts)
       self.btest('browser/async_mainloop.cpp', '121', args=['-O' + str(opts)] + self.get_async_args())
-
-  @no_wasm_backend('emterpretify - specific behavior wrt other async calls being paused or not')
-  def test_emterpreter_async_with_manual(self):
-    for opts in [0, 3]:
-      print(opts)
-      self.btest('emterpreter_async_with_manual.cpp', '121', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1', '-O' + str(opts), '-s', 'EMTERPRETIFY_BLACKLIST=["_acall"]'])
-
-  @no_wasm_backend('emterpretify - yielding behavior')
-  def test_emterpreter_async_sleep2(self):
-    self.btest('emterpreter_async_sleep2.cpp', '1', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1', '-Oz'])
-
-  @no_wasm_backend('emterpretify - safe-heap specific issues')
-  def test_emterpreter_async_sleep2_safeheap(self):
-    # check that safe-heap machinery does not cause errors in async operations
-    self.btest('emterpreter_async_sleep2_safeheap.cpp', '17', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_ASYNC=1', '-Oz', '-profiling', '-s', 'SAFE_HEAP=1', '-s', 'ASSERTIONS=1', '-s', 'EMTERPRETIFY_WHITELIST=["_main","_callback","_fix"]', '-s', 'EXIT_RUNTIME=1'])
 
   @requires_sound_hardware
   def test_sdl_audio_beep_sleep(self):
@@ -3349,7 +3311,6 @@ window.close = function() {
     'empty_list': (['-DBAD', '-s', 'ASYNCIFY_IMPORTS=[]'],), # noqa
     'em_js_bad': (['-DBAD', '-DUSE_EM_JS'],), # noqa
   })
-  @no_fastcomp('emterpretify never worked here')
   def test_async_returnvalue(self, args):
     if '@' in str(args):
       create_test_file('filey.txt', '["sync_tunnel"]')
@@ -4138,34 +4099,6 @@ window.close = function() {
 
       print('see a fail')
       self.run_browser('test.html', None, '[no http server activity]', timeout=5) # fail without the asm
-
-  @no_wasm_backend('emterpretify - bytecode in a file')
-  def test_emterpretify_file(self):
-    create_test_file('shell.html', '''
-      <!--
-        {{{ SCRIPT }}} // ignore this, we do it ourselves
-      -->
-      <script>
-        var Module = {};
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', 'code.dat', true);
-        xhr.responseType = 'arraybuffer';
-        xhr.onload = function() {
-          Module.emterpreterFile = xhr.response;
-          var script = document.createElement('script');
-          script.src = "test.js";
-          document.body.appendChild(script);
-        };
-        xhr.send(null);
-      </script>
-''')
-    try_delete('code.dat')
-    self.btest('browser_test_hello_world.c', expected='0', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_FILE="code.dat"', '-O2', '-g', '--shell-file', 'shell.html', '-s', 'ASSERTIONS=1'])
-    self.assertExists('code.dat')
-
-    try_delete('code.dat')
-    self.btest('browser_test_hello_world.c', expected='0', args=['-s', 'EMTERPRETIFY=1', '-s', 'EMTERPRETIFY_FILE="code.dat"', '-O2', '-g', '-s', 'ASSERTIONS=1'])
-    self.assertExists('code.dat')
 
   def test_vanilla_html_when_proxying(self):
     for opts in [0, 1, 2]:

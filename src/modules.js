@@ -129,7 +129,7 @@ var LibraryManager = {
         'library_async.js'
       ]);
     } else {
-      if (EMTERPRETIFY_ASYNC || ASYNCIFY) {
+      if (ASYNCIFY) {
         libraries.push('library_async.js');
       }
       if (USE_SDL == 1) {
