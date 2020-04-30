@@ -824,6 +824,22 @@ var cyberDWARFFile = '{{{ BUNDLED_CD_DEBUG_FILE }}}';
 
 #include "URIUtils.js"
 
+#if ASSERTIONS
+function createExportWrapper(name) {
+  return function() {
+    var displayName = name;
+#if !WASM_BACKEND
+    if (name[0] == '_') {
+      displayName = name.substr(1);
+    }
+#endif
+    assert(runtimeInitialized, 'native function `' + displayName + '` called before runtime intialization');
+    assert(!runtimeExited, 'native function `' + displayName + '` called after runtime exit (use NO_EXIT_RUNTIME to keep it alive after main() exits)');
+    return Module['asm'][name].apply(null, arguments);
+  };
+}
+#endif
+
 #if WASM
 var wasmBinaryFile = '{{{ WASM_BINARY_FILE }}}';
 if (!isDataURI(wasmBinaryFile)) {

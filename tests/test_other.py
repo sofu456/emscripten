@@ -10731,3 +10731,19 @@ int main() {
     src = path_from_root('tests', 'other', 'test_export_global_address.c')
     output = path_from_root('tests', 'other', 'test_export_global_address.out')
     self.do_run_from_file(src, output)
+
+  def test_native_call_before_init(self):
+    self.set_setting('ASSERTIONS')
+    self.set_setting('EXPORTED_FUNCTIONS', ['_foo'])
+    self.add_pre_run('console.log("calling foo"); Module["_foo"]();')
+    self.build('#include <stdio.h>\nint foo() { puts("foo called"); return 3; }', self.get_dir(), 'foo.c')
+    err = self.expect_fail(NODE_JS + ['foo.c.o.js'], stdout=PIPE)
+    self.assertContained('native function `foo` called before runtime intialization', err)
+
+  def test_native_call_after_exit(self):
+    self.set_setting('ASSERTIONS')
+    self.set_setting('EXIT_RUNTIME')
+    self.add_on_exit('console.log("calling main again"); Module["_main"]();')
+    self.build('#include <stdio.h>\nint main() { puts("foo called"); return 0; }', self.get_dir(), 'foo.c')
+    err = self.expect_fail(NODE_JS + ['foo.c.o.js'], stdout=PIPE)
+    self.assertContained('native function `main` called after runtime ex', err)
