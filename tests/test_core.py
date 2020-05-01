@@ -7706,7 +7706,7 @@ int main() {
   printf("Hello");
   emscripten_async_call(f, &i, 1);
   printf("World");
-  emscripten_slepp(100);
+  emscripten_sleep(100);
   printf("%d\n", i);
 }
 '''

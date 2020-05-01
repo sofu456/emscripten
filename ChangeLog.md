@@ -40,7 +40,7 @@ Current Trunk
   completely overriding the set of passes from the command line didn't make much
   sense.
 - Remove emterpreter and ``EMTERPRETIFY`` settings.  Emterpreter has largerly
-  been replaces by asyncify and is fastcomp only so due for removing in
+  been replaced by asyncify and is fastcomp only so due for removing in
   the near future anyway.
 
 v1.39.13: 04/17/2020
