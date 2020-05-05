@@ -1737,7 +1737,7 @@ def create_receiving(function_table_data, function_tables_defs, exported_impleme
           # var _main = asm["_main"];
           receiving += '\n'.join(['var ' + s + ' = asm["' + s + '"];' for s in imported_exports]) + '\n'
         else:
-          receiving += '\n'.join(make_export_wrappers(module_exports))
+          receiving += '\n'.join(['var ' + s + ' = Module["' + s + '"] = asm["' + s + '"];' for s in module_exports]) + '\n'
     else:
       receiving += 'Module["asm"] = asm;\n'
       receiving += '\n'.join(make_export_wrappers(module_exports))
