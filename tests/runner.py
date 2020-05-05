@@ -526,15 +526,15 @@ class RunnerCore(RunnerMeta('TestCase', (unittest.TestCase,), {})):
 
   def add_pre_run(self, code):
     create_test_file('pre.js', 'Module.preRun = function() { %s }' % code)
-    self.emcc_args += ['--pre-js', 'pre.js']
+    self.emcc_args += ['--pre-js', 'prerun.js']
 
   def add_post_run(self, code):
     create_test_file('pre.js', 'Module.postRun = function() { %s }' % code)
-    self.emcc_args += ['--pre-js', 'pre.js']
+    self.emcc_args += ['--pre-js', 'postrun.js']
 
   def add_on_exit(self, code):
     create_test_file('pre.js', 'Module.onExit = function() { %s }' % code)
-    self.emcc_args += ['--pre-js', 'pre.js']
+    self.emcc_args += ['--pre-js', 'onexit.js']
 
   def prep_ll_file(self, output_file, input_file, force_recompile=False, build_ll_hook=None):
     # force_recompile = force_recompile or os.path.getsize(filename + '.ll') > 50000

@@ -10746,4 +10746,4 @@ int main() {
     self.add_on_exit('console.log("calling main again"); Module["_main"]();')
     self.build('#include <stdio.h>\nint main() { puts("foo called"); return 0; }', self.get_dir(), 'foo.c')
     err = self.expect_fail(NODE_JS + ['foo.c.o.js'], stdout=PIPE)
-    self.assertContained('native function `main` called after runtime ex', err)
+    self.assertContained('native function `main` called after runtime exit', err)

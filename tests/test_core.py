@@ -358,7 +358,7 @@ class TestCoreBase(RunnerCore):
     self.assertNotContained('EMSCRIPTEN_GENERATED_FUNCTIONS', open('src.c.o.js').read())
 
   @sync
-  def test_wasm_syncronous_compilation(self):
+  def test_wasm_synchronous_compilation(self):
     self.set_setting('STRICT_JS')
     self.do_run_in_out_file_test('tests', 'core', 'test_hello_world')
 

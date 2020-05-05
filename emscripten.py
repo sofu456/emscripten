@@ -2603,15 +2603,15 @@ def make_export_wrappers(exports):
     else:
       mangled = name
     if shared.Settings.ASSERTIONS:
-      # With assertions enabled we create a wrapper that all called get routed through for
-      # the lifetime of the program
+      # With assertions enabled we create a wrapper that are calls get routed through, for
+      # the lifetime of the program.
       wrappers.append('''\
 /** @type {function(...*):?} */
 var %(mangled)s = Module["%(mangled)s"] = createExportWrapper("%(name)s");
 ''' % {'mangled': mangled, 'name': name})
     else:
-      # With assertions disables the wrapper will replace the global var and Module var on
-      # frist use.
+      # With assertions disabled the wrapper will replace the global var and Module var on
+      # first use.
       wrappers.append('''\
 /** @type {function(...*):?} */
 var %(mangled)s = Module["%(mangled)s"] = function() {
