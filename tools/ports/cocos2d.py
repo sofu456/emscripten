@@ -11,16 +11,18 @@ import re
 TAG = 'version_3_3'
 HASH = 'd7b22660036c684f09754fcbbc7562984f02aa955eef2b76555270c63a717e6672c4fe695afb16280822e8b7c75d4b99ae21975a01a4ed51cad957f7783722cd'
 
+deps = ['libpng', 'zlib']
+
+
+def needed(settings):
+  return settings.USE_COCOS2D == 3
+
 
 def get(ports, settings, shared):
-  if settings.USE_COCOS2D != 3:
-    return []
-
   ports.fetch_project(
     'cocos2d', 'https://github.com/emscripten-ports/Cocos2d/archive/' + TAG + '.zip', 'Cocos2d-' + TAG, sha512hash=HASH)
-  libname = ports.get_lib_name('libcocos2d')
 
-  def create():
+  def create(final):
     logging.info('building port: cocos2d v3')
     logging.warn('cocos2d: library is experimental, do not expect that it will work out of the box')
 
@@ -40,8 +42,7 @@ def get(ports, settings, shared):
     for src in cocos2dx_src:
       o = os.path.join(cocos2d_build, 'Cocos2d-' + TAG, 'build', src + '.o')
       shared.safe_ensure_dirs(os.path.dirname(o))
-      command = [shared.PYTHON,
-                 shared.EMCC,
+      command = [shared.EMCC,
                  '-c', src,
                  '-Wno-overloaded-virtual',
                  '-Wno-deprecated-declarations',
@@ -63,33 +64,28 @@ def get(ports, settings, shared):
       o_s.append(o)
     shared.safe_ensure_dirs(os.path.dirname(o_s[0]))
     ports.run_commands(commands)
-    final = os.path.join(cocos2d_build, libname)
     ports.create_lib(final, o_s)
 
     for dirname in cocos2dx_includes:
       target = os.path.join('cocos2d', os.path.relpath(dirname, cocos2d_root))
       ports.install_header_dir(dirname, target=target)
 
-    return final
-
-  return [shared.Cache.get(libname, create, what='port')]
+  return [shared.Cache.get_lib('libcocos2d.a', create, what='port')]
 
 
-def clear(ports, shared):
-  shared.Cache.erase_file(ports.get_lib_name('libcocos2d'))
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib('libcocos2d.a')
 
 
 def process_dependencies(settings):
-  if settings.USE_COCOS2D == 3:
-    settings.USE_LIBPNG = 1
-    settings.USE_ZLIB = 1
+  settings.USE_LIBPNG = 1
+  settings.USE_ZLIB = 1
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_COCOS2D == 3:
-    get(ports, settings, shared)
-    for include in make_includes(os.path.join(ports.get_include_dir(), 'cocos2d')):
-      args.append('-I' + include)
+def process_args(ports):
+  args = []
+  for include in make_includes(os.path.join(ports.get_include_dir(), 'cocos2d')):
+    args.append('-I' + include)
   return args
 
 

@@ -13,9 +13,9 @@ sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools import response_file
 
-EM_PROFILE_TOOLCHAIN = int(os.getenv('EM_PROFILE_TOOLCHAIN', '0'))
+EMPROFILE = int(os.getenv('EMPROFILE', '0'))
 
-if EM_PROFILE_TOOLCHAIN:
+if EMPROFILE:
   original_sys_exit = sys.exit
   original_subprocess_call = subprocess.call
   original_subprocess_check_call = subprocess.check_call
@@ -76,7 +76,7 @@ if EM_PROFILE_TOOLCHAIN:
   subprocess.check_output = profiled_check_output
   subprocess.Popen = ProfiledPopen
 
-  class ToolchainProfiler(object):
+  class ToolchainProfiler:
     # Provide a running counter towards negative numbers for PIDs for which we don't know what the actual process ID is
     imaginary_pid_ = 0
     profiler_logs_path = None # Log file not opened yet
@@ -106,8 +106,12 @@ if EM_PROFILE_TOOLCHAIN:
       return open(os.path.join(ToolchainProfiler.profiler_logs_path, 'toolchain_profiler.pid_' + str(os.getpid()) + '.json'), 'a')
 
     @staticmethod
+    def escape_string(arg):
+      return arg.replace('\\', '\\\\').replace('"', '\\"')
+
+    @staticmethod
     def escape_args(args):
-      return map(lambda arg: arg.replace('\\', '\\\\').replace('"', '\\"'), args)
+      return map(lambda arg: ToolchainProfiler.escape_string(arg), args)
 
     @staticmethod
     def record_process_start(write_log_entry=True):
@@ -141,13 +145,15 @@ if EM_PROFILE_TOOLCHAIN:
 
     @staticmethod
     def record_subprocess_spawn(process_pid, process_cmdline):
-      response_cmdline = []
+      expanded_cmdline = []
       for item in process_cmdline:
         if item.startswith('@'):
-          response_cmdline += response_file.read_response_file(item)
+          expanded_cmdline += response_file.read_response_file(item)
+        else:
+          expanded_cmdline.append(item)
 
       with ToolchainProfiler.log_access() as f:
-        f.write(',\n{"pid":' + ToolchainProfiler.mypid_str + ',"subprocessPid":' + str(os.getpid()) + ',"op":"spawn","targetPid":' + str(process_pid) + ',"time":' + ToolchainProfiler.timestamp() + ',"cmdLine":["' + '","'.join(ToolchainProfiler.escape_args(process_cmdline + response_cmdline)) + '"]}')
+        f.write(',\n{"pid":' + ToolchainProfiler.mypid_str + ',"subprocessPid":' + str(os.getpid()) + ',"op":"spawn","targetPid":' + str(process_pid) + ',"time":' + ToolchainProfiler.timestamp() + ',"cmdLine":["' + '","'.join(ToolchainProfiler.escape_args(expanded_cmdline)) + '"]}')
 
     @staticmethod
     def record_subprocess_wait(process_pid):
@@ -185,7 +191,7 @@ if EM_PROFILE_TOOLCHAIN:
       for b in ToolchainProfiler.block_stack[::-1]:
         ToolchainProfiler.exit_block(b)
 
-    class ProfileBlock(object):
+    class ProfileBlock:
       def __init__(self, block_name):
         self.block_name = block_name
 
@@ -197,7 +203,7 @@ if EM_PROFILE_TOOLCHAIN:
 
     @staticmethod
     def profile_block(block_name):
-      return ToolchainProfiler.ProfileBlock(block_name)
+      return ToolchainProfiler.ProfileBlock(ToolchainProfiler.escape_string(block_name))
 
     @staticmethod
     def imaginary_pid():
@@ -205,7 +211,7 @@ if EM_PROFILE_TOOLCHAIN:
       return ToolchainProfiler.imaginary_pid_
 
 else:
-  class ToolchainProfiler(object):
+  class ToolchainProfiler:
     @staticmethod
     def record_process_start():
       pass
@@ -234,7 +240,7 @@ else:
     def exit_block(block_name):
       pass
 
-    class ProfileBlock(object):
+    class ProfileBlock:
       def __init__(self, block_name):
         pass
 

@@ -33,7 +33,7 @@ var Types = {
 // Constructs an array ['a0', 'a1', 'a2', ..., 'a(n-1)']
 function genArgSequence(n) {
   var args = [];
-  for(var i = 0; i < n; ++i) {
+  for (var i = 0; i < n; ++i) {
     args.push('a'+i);
   }
   return args;
@@ -63,13 +63,15 @@ var LibraryManager = {
     var libraries = [
       'library.js',
       'library_formatString.js',
+      'library_math.js',
       'library_path.js',
       'library_signals.js',
       'library_syscall.js',
       'library_html5.js',
       'library_stack_trace.js',
       'library_wasi.js',
-      'library_int53.js'
+      'library_int53.js',
+      'library_dylink.js'
     ];
 
     if (!EXCEPTION_HANDLING) {
@@ -92,6 +94,7 @@ var LibraryManager = {
 
     if (USE_PTHREADS) { // TODO: Currently WebGL proxying makes pthreads library depend on WebGL.
       libraries.push('library_webgl.js');
+      libraries.push('library_html5_webgl.js');
     }
 
     if (FILESYSTEM) {
@@ -117,6 +120,7 @@ var LibraryManager = {
     if (AUTO_JS_LIBRARIES) {
       libraries = libraries.concat([
         'library_webgl.js',
+        'library_html5_webgl.js',
         'library_openal.js',
         'library_sdl.js',
         'library_glut.js',
@@ -129,14 +133,14 @@ var LibraryManager = {
         'library_async.js'
       ]);
     } else {
-      if (EMTERPRETIFY_ASYNC || ASYNCIFY) {
+      if (ASYNCIFY) {
         libraries.push('library_async.js');
       }
       if (USE_SDL == 1) {
         libraries.push('library_sdl.js');
       }
       if (USE_SDL == 2) {
-        libraries.push('library_egl.js', 'library_webgl.js');
+        libraries.push('library_egl.js', 'library_webgl.js', 'library_html5_webgl.js');
       }
     }
 
@@ -151,16 +155,30 @@ var LibraryManager = {
       libraries.push('library_webgl2.js');
     }
 
+    if (GL_EXPLICIT_UNIFORM_LOCATION) {
+      libraries.push('library_c_preprocessor.js');
+    }
+
     if (LEGACY_GL_EMULATION) {
       libraries.push('library_glemu.js');
     }
 
     if (USE_WEBGPU) {
       libraries.push('library_webgpu.js');
+      libraries.push('library_html5_webgpu.js');
     }
 
     if (BOOTSTRAPPING_STRUCT_INFO) {
-      libraries = ['library_formatString.js'];
+      libraries = [
+        'library_bootstrap.js',
+        'library_formatString.js',
+        'library_stack_trace.js',
+        'library_int53.js',
+      ];
+    }
+
+    if (SUPPORT_BIG_ENDIAN) {
+      libraries.push('library_little_endian_heap.js');
     }
 
     // Deduplicate libraries to avoid processing any library file multiple times
@@ -171,8 +189,7 @@ var LibraryManager = {
     // Save the list for has() queries later.
     this.libraries = libraries;
 
-    for (var i = 0; i < libraries.length; i++) {
-      var filename = libraries[i];
+    for (var filename of libraries) {
       var src = read(filename);
       var processed = undefined;
       try {
@@ -202,42 +219,65 @@ var LibraryManager = {
       }
     }
 
-    // apply synonyms. these are typically not speed-sensitive, and doing it this way makes it possible to not include hacks in the compiler
+    // apply synonyms. these are typically not speed-sensitive, and doing it
+    // this way makes it possible to not include hacks in the compiler
     // (and makes it simpler to switch between SDL versions, fastcomp and non-fastcomp, etc.).
     var lib = LibraryManager.library;
     libloop: for (var x in lib) {
-      if (x.lastIndexOf('__') > 0) continue; // ignore __deps, __*
-      if (lib[x + '__asm']) continue; // ignore asm library functions, those need to be fully optimized
+      if (isJsLibraryConfigIdentifier(x)) {
+        var index = x.lastIndexOf('__');
+        var basename = x.slice(0, index);
+        if (!(basename in lib)) {
+          error('Missing library element `' + basename + '` for library config `' + x + '`');
+        }
+        continue;
+      }
       if (typeof lib[x] === 'string') {
         var target = x;
         while (typeof lib[target] === 'string') {
           // ignore code and variable assignments, aliases are just simple names
           if (lib[target].search(/[=({; ]/) >= 0) continue libloop;
-          // ignore trivial pass-throughs to Math.*
-          if (lib[target].indexOf('Math_') == 0) continue libloop;
           target = lib[target];
         }
         if (!isNaN(target)) continue; // This is a number, and so cannot be an alias target.
         if (typeof lib[target] === 'undefined' || typeof lib[target] === 'function') {
-          // When functions are aliased, the alias target must provide a signature for the function so that an efficient form of forwarding can be implemented.
-          // Primarily read the signature on the alias, and secondarily on the target.
+          // When functions are aliased, a signature for the function must be
+          // provided so that an efficient form of forwarding can be
+          // implemented.
           function testStringType(sig) {
             if (typeof lib[sig] !== 'undefined' && typeof typeof lib[sig] !== 'string') {
               error(sig + ' should be a string! (was ' + typeof lib[sig]);
             }
           }
-          testStringType(x + '__sig');
-          testStringType(target + '__sig');
-          if (typeof lib[x + '__sig'] === 'string' && typeof lib[target + '__sig'] === 'string' && lib[x + '__sig'] != lib[target + '__sig']) {
-            error(x + '__sig (' + lib[x + '__sig'] + ')  differs from ' + target + '__sig (' + lib[target + '__sig'] + ')');
+          var aliasSig = x + '__sig';
+          var targetSig = target + '__sig';
+          testStringType(aliasSig);
+          testStringType(targetSig);
+          if (typeof lib[aliasSig] === 'string' && typeof lib[targetSig] === 'string' && lib[aliasSig] != lib[targetSig]) {
+            error(aliasSig + ' (' + lib[aliasSig] + ')  differs from ' + targetSig + ' (' + lib[targetSig] + ')');
           }
 
-          var sig = lib[x + '__sig'] || lib[target + '__sig'];
+          var sig = lib[aliasSig] || lib[targetSig];
           if (typeof sig !== 'string') {
-            error('Function ' + x + ' aliases to target function ' + target + ', but neither the alias or the target provide a signature. Please add a ' + target + "__sig: 'vifj...' annotation or a " + x + "__sig: 'vifj...' annotation to describe the type of function forwarding that is needed!");
+            error('Function ' + x + ' aliases to target function ' + target + ', but neither the alias or the target provide a signature. Please add a ' + targetSig + ": 'vifj...' annotation or a " + aliasSig + ": 'vifj...' annotation to describe the type of function forwarding that is needed!");
+          }
+
+          // If only one of the target or the alias specifies a sig then copy
+          // this signature to the other.
+          if (!lib[aliasSig]) {
+            lib[aliasSig] = lib[targetSig];
+          } else if (!lib[targetSig]) {
+            lib[targetSig] = lib[aliasSig];
+          }
+
+          if (typeof lib[target] !== 'function') {
+            error(`no alias found for ${x}`);
           }
 
           var argCount = sig.length - 1;
+          if (argCount !== lib[target].length) {
+            error(`incorrect number of arguments in signature of ${x} (declared: ${argCount}, expected: ${lib[target].length})`);
+          }
           var ret = sig == 'v' ? '' : 'return ';
           var args = genArgSequence(argCount).join(',');
           lib[x] = new Function(args, ret + '_' + target + '(' + args + ');');
@@ -247,35 +287,6 @@ var LibraryManager = {
         }
       }
     }
-
-    if (WASM_BACKEND) {
-      // all asm.js methods should just be run in JS. We should optimize them eventually into wasm. TODO
-      for (var x in lib) {
-        if (lib[x + '__asm']) {
-          lib[x + '__asm'] = undefined;
-        }
-      }
-    }
-
-    /*
-    // export code for CallHandlers.h
-    printErr('============================');
-    for (var x in this.library) {
-      var y = this.library[x];
-      if (typeof y === 'string' && x.indexOf('__sig') < 0 && x.indexOf('__postset') < 0 && y.indexOf(' ') < 0) {
-        printErr('DEF_REDIRECT_HANDLER(' + x + ', ' + y + ');');
-      }
-    }
-    printErr('============================');
-    for (var x in this.library) {
-      var y = this.library[x];
-      if (typeof y === 'string' && x.indexOf('__sig') < 0 && x.indexOf('__postset') < 0 && y.indexOf(' ') < 0) {
-        printErr('  SETUP_CALL_HANDLER(' + x + ');');
-      }
-    }
-    printErr('============================');
-    // end export code for CallHandlers.h
-    */
 
     this.loaded = true;
   },
@@ -295,7 +306,6 @@ var LibraryManager = {
   },
 
   isStubFunction: function(ident) {
-    if (SIDE_MODULE == 1) return false; // cannot eliminate these, as may be implement in the main module and imported by us
     var libCall = LibraryManager.library[ident.substr(1)];
     return typeof libCall === 'function' && libCall.toString().replace(/\s/g, '') === 'function(){}'
                                          && !(ident in Functions.implementedFunctions);
@@ -328,15 +338,12 @@ function isFSPrefixed(name) {
 
 // forcing the filesystem exports a few things by default
 function isExportedByForceFilesystem(name) {
-  return name === 'FS_createFolder' ||
-         name === 'FS_createPath' ||
+  return name === 'FS_createPath' ||
          name === 'FS_createDataFile' ||
          name === 'FS_createPreloadedFile' ||
          name === 'FS_createLazyFile' ||
-         name === 'FS_createLink' ||
          name === 'FS_createDevice' ||
          name === 'FS_unlink' ||
-         name === 'getMemory' ||
          name === 'addRunDependency' ||
          name === 'removeRunDependency';
 }
@@ -395,7 +402,6 @@ function exportRuntime() {
     'setValue',
     'getValue',
     'allocate',
-    'getMemory',
     'UTF8ArrayToString',
     'UTF8ToString',
     'stringToUTF8Array',
@@ -420,9 +426,6 @@ function exportRuntime() {
     'FS_createLink',
     'FS_createDevice',
     'FS_unlink',
-    'dynamicAlloc',
-    'loadDynamicLibrary',
-    'loadWebAssemblyModule',
     'getLEB',
     'getFunctionTables',
     'alignFunctionTables',
@@ -442,9 +445,12 @@ function exportRuntime() {
     'abort',
   ];
 
-  function isJsLibraryConfigIdentifier(ident) {
-    return ident.endsWith('__sig') || ident.endsWith('__proxy') || ident.endsWith('__asm') || ident.endsWith('__inline')
-     || ident.endsWith('__deps') || ident.endsWith('__postset') || ident.endsWith('__docs') || ident.endsWith('__import');
+  if (USE_OFFSET_CONVERTER) {
+    runtimeElements.push('WasmOffsetConverter');
+  }
+
+  if (LOAD_SOURCE_MAP) {
+    runtimeElements.push('WasmSourceMap');
   }
 
   // Add JS library elements such as FS, GL, ENV, etc. These are prefixed with
@@ -479,19 +485,13 @@ function exportRuntime() {
   if (STACK_OVERFLOW_CHECK) {
     runtimeElements.push('writeStackCookie');
     runtimeElements.push('checkStackCookie');
-    if (!MINIMAL_RUNTIME) {
-      runtimeElements.push('abortStackOverflow');
-    }
   }
 
   if (USE_PTHREADS) {
     // In pthreads mode, the following functions always need to be exported to
     // Module for closure compiler, and also for MODULARIZE (so worker.js can
     // access them).
-    var threadExports = ['PThread', '_pthread_self'];
-    if (WASM) {
-      threadExports.push('wasmMemory');
-    }
+    var threadExports = ['PThread', 'wasmMemory'];
     if (!MINIMAL_RUNTIME) {
       threadExports.push('ExitStatus');
     }
@@ -518,8 +518,6 @@ function exportRuntime() {
   var runtimeNumbers = [
     'ALLOC_NORMAL',
     'ALLOC_STACK',
-    'ALLOC_DYNAMIC',
-    'ALLOC_NONE',
   ];
   if (ASSERTIONS) {
     // check all exported things exist, warn about typos
@@ -530,11 +528,10 @@ function exportRuntime() {
       }
     }
   }
-  return runtimeElements.map(function(name) {
-    return maybeExport(name);
-  }).join('\n') + runtimeNumbers.map(function(name) {
-    return maybeExportNumber(name);
-  }).join('\n');
+  var exports = runtimeElements.map(function(name) { return maybeExport(name); });
+  exports = exports.concat(runtimeNumbers.map(function(name) { return maybeExportNumber(name); }));
+  exports = exports.filter(function(name) { return name != '' });
+  return exports.join('\n');
 }
 
 var PassManager = {
@@ -542,8 +539,6 @@ var PassManager = {
     print('\n//FORWARDED_DATA:' + JSON.stringify({
       Functions: Functions,
       EXPORTED_FUNCTIONS: EXPORTED_FUNCTIONS,
-      STATIC_BUMP: STATIC_BUMP, // updated with info from JS
-      DYNAMICTOP_PTR: DYNAMICTOP_PTR,
       ATINITS: ATINITS.join('\n'),
       ATMAINS: ATMAINS.join('\n'),
       ATEXITS: ATEXITS.join('\n'),

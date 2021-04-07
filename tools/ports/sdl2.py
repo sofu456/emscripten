@@ -5,20 +5,24 @@
 
 import os
 
-TAG = 'version_21'
-HASH = '0ea4ab13b8715b9f8b41096f47dc03cad17f35e19c945156b2bb0f3c16b261a4b0c6d576008f1c458377a9f70f1c055a5900a47b8342b2858dc88a55919e63df'
+TAG = 'version_23'
+HASH = '1c37152529d1a2ff159d0e6f950d49dca61f65b582a6bc45c4f027629c7b83325eff26240992884eb3c4f2754e4d7516ee3ab7b54829d2bf81f2968f317b4fbd'
 SUBDIR = 'SDL2-' + TAG
 
 
-def get(ports, settings, shared):
-  if settings.USE_SDL != 2:
-    return []
+def needed(settings):
+  return settings.USE_SDL == 2
 
+
+def get_lib_name(settings):
+  return 'libSDL2' + ('-mt' if settings.USE_PTHREADS else '') + '.a'
+
+
+def get(ports, settings, shared):
   # get the port
   ports.fetch_project('sdl2', 'https://github.com/emscripten-ports/SDL2/archive/' + TAG + '.zip', SUBDIR, sha512hash=HASH)
-  libname = ports.get_lib_name('libSDL2' + ('-mt' if settings.USE_PTHREADS else ''))
 
-  def create():
+  def create(final):
     # copy includes to a location so they can be used as 'SDL2/'
     source_include_path = os.path.join(ports.get_dir(), 'sdl2', SUBDIR, 'include')
     ports.install_headers(source_include_path, target='SDL2')
@@ -68,7 +72,7 @@ def get(ports, settings, shared):
     for src in srcs:
       o = os.path.join(ports.get_build_dir(), 'sdl2', 'src', src + '.o')
       shared.safe_ensure_dirs(os.path.dirname(o))
-      command = [shared.PYTHON, shared.EMCC,
+      command = [shared.EMCC,
                  '-c', os.path.join(ports.get_dir(), 'sdl2', SUBDIR, 'src', src),
                  '-o', o, '-I' + dest_include_path,
                  '-O2', '-DUSING_GENERATED_CONFIG_H', '-w']
@@ -77,26 +81,22 @@ def get(ports, settings, shared):
       commands.append(command)
       o_s.append(o)
     ports.run_commands(commands)
-    final = os.path.join(ports.get_build_dir(), 'sdl2', libname)
     ports.create_lib(final, o_s)
-    return final
 
-  return [shared.Cache.get(libname, create, what='port')]
-
-
-def clear(ports, shared):
-  shared.Cache.erase_file(ports.get_lib_name('libSDL2'))
+  return [shared.Cache.get_lib(get_lib_name(settings), create, what='port')]
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_SDL == 1:
-    # TODO(sbc): remove this
-    args += ['-Xclang', '-isystem' + shared.path_from_root('system', 'include', 'SDL')]
-  elif settings.USE_SDL == 2:
-    # TODO(sbc): remove this
-    args += ['-Xclang', '-isystem' + os.path.join(ports.get_include_dir(), 'SDL2')]
-    get(ports, settings, shared)
-  return args
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib(get_lib_name(settings))
+
+
+def process_dependencies(settings):
+  settings.DEFAULT_LIBRARY_FUNCS_TO_INCLUDE += ['$autoResumeAudioContext', '$dynCall']
+
+
+def process_args(ports):
+  # TODO(sbc): remove this
+  return ['-Xclang', '-isystem' + os.path.join(ports.get_include_dir(), 'SDL2')]
 
 
 def show():

@@ -1,5 +1,5 @@
-# This file will be edited (the {{{ }}} things), and then ~/.emscripten created
-# with the result, if ~/.emscripten doesn't exist.
+# This file will be edited (the {{{ }}} things), and written to `.emscripten`
+# when emscripten is first used and no config file is found.
 
 # Note: If you put paths relative to the home directory, do not forget
 # os.path.expanduser
@@ -20,12 +20,6 @@ EMSCRIPTEN_ROOT = os.path.expanduser(os.getenv('EMSCRIPTEN', '{{{ EMSCRIPTEN_ROO
 
 LLVM_ROOT = os.path.expanduser(os.getenv('LLVM', '{{{ LLVM_ROOT }}}')) # directory
 BINARYEN_ROOT = os.path.expanduser(os.getenv('BINARYEN', '')) # directory
-
-# Add this if you have manually built the JS optimizer executable (in
-# Emscripten/tools/optimizer) and want to run it from a custom location.
-# Alternatively, you can set this as the environment variable
-# EMSCRIPTEN_NATIVE_OPTIMIZER.
-# EMSCRIPTEN_NATIVE_OPTIMIZER='/path/to/custom/optimizer(.exe)'
 
 # Location of the node binary to use for running the JS parts of the compiler.
 # This engine must exist, or nothing can be compiled.

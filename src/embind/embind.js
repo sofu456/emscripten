@@ -635,20 +635,13 @@ var LibraryEmbind = {
 
             var str;
             if (stdStringIsUTF8) {
-                //ensure null termination at one-past-end byte if not present yet
-                var endChar = HEAPU8[value + 4 + length];
-                var endCharSwap = 0;
-                if (endChar != 0) {
-                    endCharSwap = endChar;
-                    HEAPU8[value + 4 + length] = 0;
-                }
-
                 var decodeStartPtr = value + 4;
                 // Looping here to support possible embedded '0' bytes
                 for (var i = 0; i <= length; ++i) {
                     var currentBytePtr = value + 4 + i;
-                    if (HEAPU8[currentBytePtr] == 0) {
-                        var stringSegment = UTF8ToString(decodeStartPtr);
+                    if (i == length || HEAPU8[currentBytePtr] == 0) {
+                        var maxRead = currentBytePtr - decodeStartPtr;
+                        var stringSegment = UTF8ToString(decodeStartPtr, maxRead);
                         if (str === undefined) {
                             str = stringSegment;
                         } else {
@@ -657,10 +650,6 @@ var LibraryEmbind = {
                         }
                         decodeStartPtr = currentBytePtr + 1;
                     }
-                }
-
-                if (endCharSwap != 0) {
-                    HEAPU8[value + 4 + length] = endCharSwap;
                 }
             } else {
                 var a = new Array(length);
@@ -754,20 +743,14 @@ var LibraryEmbind = {
             var length = HEAPU32[value >> 2];
             var HEAP = getHeap();
             var str;
-            // Ensure null termination at one-past-end byte if not present yet
-            var endChar = HEAP[(value + 4 + length * charSize) >> shift];
-            var endCharSwap = 0;
-            if (endChar != 0) {
-                endCharSwap = endChar;
-                HEAP[(value + 4 + length * charSize) >> shift] = 0;
-            }
 
             var decodeStartPtr = value + 4;
             // Looping here to support possible embedded '0' bytes
             for (var i = 0; i <= length; ++i) {
                 var currentBytePtr = value + 4 + i * charSize;
-                if (HEAP[currentBytePtr >> shift] == 0) {
-                    var stringSegment = decodeString(decodeStartPtr);
+                if (i == length || HEAP[currentBytePtr >> shift] == 0) {
+                    var maxReadBytes = currentBytePtr - decodeStartPtr;
+                    var stringSegment = decodeString(decodeStartPtr, maxReadBytes);
                     if (str === undefined) {
                         str = stringSegment;
                     } else {
@@ -776,10 +759,6 @@ var LibraryEmbind = {
                     }
                     decodeStartPtr = currentBytePtr + charSize;
                 }
-            }
-
-            if (endCharSwap != 0) {
-                HEAP[(value + 4 + length * charSize) >> shift] = endCharSwap;
             }
 
             _free(value);
@@ -944,7 +923,7 @@ var LibraryEmbind = {
     // TODO: Remove this completely once all function invokers are being dynamically generated.
     var needsDestructorStack = false;
 
-    for(var i = 1; i < argTypes.length; ++i) { // Skip return value at index 0 - it's not deleted here.
+    for (var i = 1; i < argTypes.length; ++i) { // Skip return value at index 0 - it's not deleted here.
         if (argTypes[i] !== null && argTypes[i].destructorFunction === undefined) { // The type does not define a destructor function - must use dynamic stack
             needsDestructorStack = true;
             break;
@@ -1004,7 +983,7 @@ var LibraryEmbind = {
 #else
     var argsList = "";
     var argsListWired = "";
-    for(var i = 0; i < argCount - 2; ++i) {
+    for (var i = 0; i < argCount - 2; ++i) {
         argsList += (i!==0?", ":"")+"arg"+i;
         argsListWired += (i!==0?", ":"")+"arg"+i+"Wired";
     }
@@ -1037,7 +1016,7 @@ var LibraryEmbind = {
         invokerFnBody += "var thisWired = classParam.toWireType("+dtorStack+", this);\n";
     }
 
-    for(var i = 0; i < argCount - 2; ++i) {
+    for (var i = 0; i < argCount - 2; ++i) {
         invokerFnBody += "var arg"+i+"Wired = argType"+i+".toWireType("+dtorStack+", arg"+i+"); // "+argTypes[i+2].name+"\n";
         args1.push("argType"+i);
         args2.push(argTypes[i+2]);
@@ -1053,7 +1032,7 @@ var LibraryEmbind = {
     if (needsDestructorStack) {
         invokerFnBody += "runDestructors(destructors);\n";
     } else {
-        for(var i = isClassMethodFunc?1:2; i < argTypes.length; ++i) { // Skip return value at index 0 - it's not deleted here. Also skip class type if not a method.
+        for (var i = isClassMethodFunc?1:2; i < argTypes.length; ++i) { // Skip return value at index 0 - it's not deleted here. Also skip class type if not a method.
             var paramName = (i === 1 ? "thisWired" : ("arg"+(i - 2)+"Wired"));
             if (argTypes[i].destructorFunction !== null) {
                 invokerFnBody += paramName+"_dtor("+paramName+"); // "+argTypes[i].name+"\n";
@@ -1083,42 +1062,28 @@ var LibraryEmbind = {
 #endif
   },
 
-  $embind__requireFunction__deps: ['$readLatin1String', '$throwBindingError'],
+  $embind__requireFunction__deps: ['$readLatin1String', '$throwBindingError'
+#if DYNCALLS || !WASM_BIGINT
+    , '$getDynCaller'
+#endif
+  ],
   $embind__requireFunction: function(signature, rawFunction) {
     signature = readLatin1String(signature);
 
-    function makeDynCaller(dynCall) {
-#if DYNAMIC_EXECUTION == 0
-      var argCache = [rawFunction];
-      return function() {
-          argCache.length = arguments.length + 1;
-          for (var i = 0; i < arguments.length; i++) {
-            argCache[i + 1] = arguments[i];
-          }
-          return dynCall.apply(null, argCache);
-      };
+    function makeDynCaller() {
+#if DYNCALLS
+      return getDynCaller(signature, rawFunction);
 #else
-        var args = [];
-        for (var i = 1; i < signature.length; ++i) {
-            args.push('a' + i);
-        }
-
-        var name = 'dynCall_' + signature + '_' + rawFunction;
-        var body = 'return function ' + name + '(' + args.join(', ') + ') {\n';
-        body    += '    return dynCall(rawFunction' + (args.length ? ', ' : '') + args.join(', ') + ');\n';
-        body    += '};\n';
-
-        return (new Function('dynCall', 'rawFunction', body))(dynCall, rawFunction);
+#if !WASM_BIGINT
+      if (signature.indexOf('j') != -1) {
+        return getDynCaller(signature, rawFunction);
+      }
+#endif
+      return wasmTable.get(rawFunction);
 #endif
     }
 
-#if MINIMAL_RUNTIME
-    var dc = asm['dynCall_' + signature];
-#else
-    var dc = Module['dynCall_' + signature];
-#endif
-    var fp = makeDynCaller(dc);
-
+    var fp = makeDynCaller();
     if (typeof fp !== "function") {
         throwBindingError("unknown function pointer with signature " + signature + ": " + rawFunction);
     }
@@ -1253,6 +1218,7 @@ var LibraryEmbind = {
 
   $structRegistrations: {},
 
+  _embind_register_value_object__sig: 'viiiiii',
   _embind_register_value_object__deps: [
     '$structRegistrations', '$readLatin1String', '$embind__requireFunction'],
   _embind_register_value_object: function(
@@ -1271,6 +1237,7 @@ var LibraryEmbind = {
     };
   },
 
+  _embind_register_value_object_field__sig: 'viiiiiiiiii',
   _embind_register_value_object_field__deps: [
     '$structRegistrations', '$readLatin1String', '$embind__requireFunction'],
   _embind_register_value_object_field: function(
@@ -1296,6 +1263,7 @@ var LibraryEmbind = {
     });
   },
 
+  _embind_finalize_value_object__sig: 'ii',
   _embind_finalize_value_object__deps: [
     '$structRegistrations', '$runDestructors',
     '$simpleReadValueFromPointer', '$whenDependentTypesAreResolved'],
@@ -1346,7 +1314,7 @@ var LibraryEmbind = {
                 // assume all fields are present without checking.
                 for (var fieldName in fields) {
                     if (!(fieldName in o)) {
-                        throw new TypeError('Missing field');
+                        throw new TypeError('Missing field:  "' + fieldName + '"');
                     }
                 }
                 var ptr = rawConstructor();

@@ -17,7 +17,7 @@ function setValue(ptr, value, type, noSafe) {
   if (type.charAt(type.length-1) === '*') type = 'i32'; // pointers are 32-bit
 #if SAFE_HEAP
   if (noSafe) {
-    switch(type) {
+    switch (type) {
       case 'i1': {{{ makeSetValue('ptr', '0', 'value', 'i1', undefined, undefined, undefined, '1') }}}; break;
       case 'i8': {{{ makeSetValue('ptr', '0', 'value', 'i8', undefined, undefined, undefined, '1') }}}; break;
       case 'i16': {{{ makeSetValue('ptr', '0', 'value', 'i16', undefined, undefined, undefined, '1') }}}; break;
@@ -29,7 +29,7 @@ function setValue(ptr, value, type, noSafe) {
     }
   } else {
 #endif
-    switch(type) {
+    switch (type) {
       case 'i1': {{{ makeSetValue('ptr', '0', 'value', 'i1') }}}; break;
       case 'i8': {{{ makeSetValue('ptr', '0', 'value', 'i8') }}}; break;
       case 'i16': {{{ makeSetValue('ptr', '0', 'value', 'i16') }}}; break;
@@ -52,7 +52,7 @@ function getValue(ptr, type, noSafe) {
   if (type.charAt(type.length-1) === '*') type = 'i32'; // pointers are 32-bit
 #if SAFE_HEAP
   if (noSafe) {
-    switch(type) {
+    switch (type) {
       case 'i1': return {{{ makeGetValue('ptr', '0', 'i1', undefined, undefined, undefined, undefined, '1') }}};
       case 'i8': return {{{ makeGetValue('ptr', '0', 'i8', undefined, undefined, undefined, undefined, '1') }}};
       case 'i16': return {{{ makeGetValue('ptr', '0', 'i16', undefined, undefined, undefined, undefined, '1') }}};
@@ -64,7 +64,7 @@ function getValue(ptr, type, noSafe) {
     }
   } else {
 #endif
-    switch(type) {
+    switch (type) {
       case 'i1': return {{{ makeGetValue('ptr', '0', 'i1') }}};
       case 'i8': return {{{ makeGetValue('ptr', '0', 'i8') }}};
       case 'i16': return {{{ makeGetValue('ptr', '0', 'i16') }}};
@@ -108,13 +108,17 @@ function SAFE_HEAP_STORE(dest, value, bytes, isFloat) {
 #endif
   if (dest <= 0) abort('segmentation fault storing ' + bytes + ' bytes to address ' + dest);
   if (dest % bytes !== 0) abort('alignment error storing to address ' + dest + ', which was expected to be aligned to a multiple of ' + bytes);
-  if (dest + bytes > HEAPU32[DYNAMICTOP_PTR>>2]) abort('segmentation fault, exceeded the top of the available dynamic heap when storing ' + bytes + ' bytes to address ' + dest + '. DYNAMICTOP=' + HEAP32[DYNAMICTOP_PTR>>2]);
-  assert(DYNAMICTOP_PTR);
-  assert(HEAP32[DYNAMICTOP_PTR>>2] <= HEAP8.length);
+  if (runtimeInitialized) {
+    var brk = _sbrk() >>> 0;
+    if (dest + bytes > brk) abort('segmentation fault, exceeded the top of the available dynamic heap when storing ' + bytes + ' bytes to address ' + dest + '. DYNAMICTOP=' + brk);
+    assert(brk >= _emscripten_stack_get_base()); // sbrk-managed memory must be above the stack
+    assert(brk <= HEAP8.length);
+  }
   setValue(dest, value, getSafeHeapType(bytes, isFloat), 1);
+  return value;
 }
 function SAFE_HEAP_STORE_D(dest, value, bytes) {
-  SAFE_HEAP_STORE(dest, value, bytes, true);
+  return SAFE_HEAP_STORE(dest, value, bytes, true);
 }
 
 /** @param {number|boolean=} isFloat */
@@ -124,12 +128,15 @@ function SAFE_HEAP_LOAD(dest, bytes, unsigned, isFloat) {
 #endif
   if (dest <= 0) abort('segmentation fault loading ' + bytes + ' bytes from address ' + dest);
   if (dest % bytes !== 0) abort('alignment error loading from address ' + dest + ', which was expected to be aligned to a multiple of ' + bytes);
-  if (dest + bytes > HEAPU32[DYNAMICTOP_PTR>>2]) abort('segmentation fault, exceeded the top of the available dynamic heap when loading ' + bytes + ' bytes from address ' + dest + '. DYNAMICTOP=' + HEAP32[DYNAMICTOP_PTR>>2]);
-  assert(DYNAMICTOP_PTR);
-  assert(HEAP32[DYNAMICTOP_PTR>>2] <= HEAP8.length);
+  if (runtimeInitialized) {
+    var brk = _sbrk() >>> 0;
+    if (dest + bytes > brk) abort('segmentation fault, exceeded the top of the available dynamic heap when loading ' + bytes + ' bytes from address ' + dest + '. DYNAMICTOP=' + brk);
+    assert(brk >= _emscripten_stack_get_base()); // sbrk-managed memory must be above the stack
+    assert(brk <= HEAP8.length);
+  }
   var type = getSafeHeapType(bytes, isFloat);
   var ret = getValue(dest, type, 1);
-  if (unsigned) ret = unSign(ret, parseInt(type.substr(1), 10), 1);
+  if (unsigned) ret = unSign(ret, parseInt(type.substr(1), 10));
 #if SAFE_HEAP_LOG
   out('SAFE_HEAP load: ' + [dest, ret, bytes, isFloat, unsigned, SAFE_HEAP_COUNTER++]);
 #endif
@@ -155,5 +162,93 @@ function alignfault() {
 }
 function ftfault() {
   abort('Function table mask error');
+}
+#endif
+
+#if USE_ASAN
+// C versions of asan_js_{load|store}_* will be used from compiled code, which have
+// ASan instrumentation on them. However, until the wasm module is ready, we
+// must access things directly.
+
+/** @suppress{duplicate} */
+function _asan_js_load_1(ptr) {
+  if (runtimeInitialized) return _asan_c_load_1(ptr);
+  return HEAP8[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_1u(ptr) {
+  if (runtimeInitialized) return _asan_c_load_1u(ptr);
+  return HEAPU8[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_2(ptr) {
+  if (runtimeInitialized) return _asan_c_load_2(ptr);
+  return HEAP16[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_2u(ptr) {
+  if (runtimeInitialized) return _asan_c_load_2u(ptr);
+  return HEAPU16[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_4(ptr) {
+  if (runtimeInitialized) return _asan_c_load_4(ptr);
+  return HEAP32[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_4u(ptr) {
+  if (runtimeInitialized) return _asan_c_load_4u(ptr) >>> 0;
+  return HEAPU32[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_f(ptr) {
+  if (runtimeInitialized) return _asan_c_load_f(ptr);
+  return HEAPF32[ptr];
+}
+/** @suppress{duplicate} */
+function _asan_js_load_d(ptr) {
+  if (runtimeInitialized) return _asan_c_load_d(ptr);
+  return HEAPF64[ptr];
+}
+
+/** @suppress{duplicate} */
+function _asan_js_store_1(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_1(ptr, val);
+  return HEAP8[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_1u(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_1u(ptr, val);
+  return HEAPU8[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_2(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_2(ptr, val);
+  return HEAP16[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_2u(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_2u(ptr, val);
+  return HEAPU16[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_4(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_4(ptr, val);
+  return HEAP32[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_4u(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_4u(ptr, val) >>> 0;
+  return HEAPU32[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_f(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_f(ptr, val);
+  return HEAPF32[ptr] = val;
+}
+/** @suppress{duplicate} */
+function _asan_js_store_d(ptr, val) {
+  if (runtimeInitialized) return _asan_c_store_d(ptr, val);
+  return HEAPF64[ptr] = val;
 }
 #endif

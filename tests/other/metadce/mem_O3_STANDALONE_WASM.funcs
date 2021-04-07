@@ -1,5 +1,3 @@
-$__original_main
+$__wasm_call_ctors
 $_start
-$dlmalloc
-$main
 $sbrk

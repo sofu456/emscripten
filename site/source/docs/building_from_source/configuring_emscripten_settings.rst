@@ -4,7 +4,10 @@
 Configuring Emscripten Settings when Manually Building from Source
 ==================================================================
 
-The compiler settings used by Emscripten are defined in the :ref:`compiler configuration file (~/.emscripten) <compiler-configuration-file>`. These settings include paths to the tools (LLVM, Clang, Java, etc.) and the compiler's temporary directory for intermediate build files.
+The compiler settings used by Emscripten are defined in the :ref:`compiler
+configuration file (.emscripten) <compiler-configuration-file>`. These settings
+include paths to the tools (LLVM, Clang, Java, etc.) and the compiler's
+temporary directory for intermediate build files.
 
 This article explains how to create and update the file when you are building Emscripten :ref:`manually <installing-from-source>` from source.
 
@@ -26,19 +29,24 @@ The settings file is created the first time a user runs :ref:`emcc <emccdoc>` (o
 	
 Emscripten makes a "best guess" at the correct locations for tools and updates the file appropriately. Where possible it will look for "system" apps (like Python and Java).
 
-The file will probably not include the link to :term:`Fastcomp` (``LLVM_ROOT``) as a manual source build can create this anywhere.
+In most cases it is necessary to edit the generated file and modify at least the
+``LLVM_ROOT`` and ``BINARYEN_ROOT`` settings to point to the correct location of
+your local LLVM and Binaryen installations respectively.
 
 Locating the compiler configuration file (.emscripten)
 =======================================================
 
-The settings file is created in the user's home directory: 
+The settings file (``.emscripten``) is created by default within the emscripten directory:
 
-	- On Linux and macOS this file is named **~/.emscripten**, where ~ is the user's home directory.
+In cases where the emscripten directory is read-only the users home directoy
+will be used:
 
-		.. note:: Files with the "." prefix are hidden by default. You may need to change your view settings to find the file.
+  - On Linux and macOS this file is named **~/.emscripten**, where ~ is the
+    user's home directory.
 
+    .. note:: Files with the "." prefix are hidden by default. You may need to change your view settings to find the file.
 
-	- On Windows the file can be found at a path like: **C:/Users/yourusername_000/.emscripten**.
+  - On Windows the file can be found at a path like: **C:/Users/yourusername_000/.emscripten**.
 
 
 Compiler configuration file-format
@@ -60,14 +68,14 @@ You can find out the other variable names from the default *.emscripten* file or
 Editing the compiler configuration file
 =======================================
 
-The compiler configuration file can be edited with the text editor of your choice. As stated above, most default settings are likely to be correct. If you're building manually from source, you are most likely to have to update the variable ``LLVM_ROOT`` (for :term:`Fastcomp`).
+The compiler configuration file can be edited with the text editor of your choice. As stated above, most default settings are likely to be correct. If you're building manually from source, you are most likely to have to update the variable ``LLVM_ROOT``
 
 		
-#. Edit the variable ``LLVM_ROOT`` to point to the directory where you :ref:`built Fastcomp <llvm-update-compiler-configuration-file>`. This path is likely to be something like **<LLVM root>/build/Release/bin** or **<LLVM root>/build/bin**, where ``<LLVM root>`` is the path to the directory where you cloned LLVM:
+#. Edit the variable ``LLVM_ROOT`` to point to the directory where you built the LLVM binaries, such as:
    
 	::
    
-		LLVM_ROOT = os.path.expanduser(os.getenv('LLVM', '/home/ubuntu/a-path/emscripten-fastcomp/build/bin'))
+		LLVM_ROOT = os.path.expanduser(os.getenv('LLVM', '/home/ubuntu/a-path/llvm/build/bin'))
 
 	.. note:: Use forward slashes!
 

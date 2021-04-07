@@ -1577,7 +1577,7 @@ var LibraryOpenAL = {
       var err = c.mediaStreamError;
       if (err) {
 #if OPENAL_DEBUG
-        switch(err.name) {
+        switch (err.name) {
         case 'PermissionDeniedError':
           console.error(funcname+'() but the user denied access to the device');
           break;
@@ -1607,6 +1607,7 @@ var LibraryOpenAL = {
 
   // bufferSize is actually 'number of sample frames', so was renamed
   // bufferFrameCapacity here for clarity.
+  alcCaptureOpenDevice__deps: ['$autoResumeAudioContext'],
   alcCaptureOpenDevice__proxy: 'sync',
   alcCaptureOpenDevice__sig: 'iiiii',
   alcCaptureOpenDevice: function(pDeviceName, requestedSampleRate, format, bufferFrameCapacity) {
@@ -1670,6 +1671,8 @@ var LibraryOpenAL = {
         return 0;
       }
     }
+
+    autoResumeAudioContext(AL.sharedCaptureAudioCtx);
 
     var outputChannelCount;
 
@@ -1742,6 +1745,7 @@ var LibraryOpenAL = {
       inputChannelCount: null, // Not known until the getUserMedia() promise resolves
       mediaStreamError: null, // Used by other functions to return early and report an error.
       mediaStreamSourceNode: null,
+      mediaStream: null,
       // Either one, or none of the below two, is active.
       mergerNode: null,
       splitterNode: null,
@@ -1752,6 +1756,7 @@ var LibraryOpenAL = {
         return buffers[0].length;
       },
       capturePlayhead: 0, // current write position, in sample frames
+      captureReadhead: 0,
       capturedFrameCount: 0
     };
 
@@ -1765,9 +1770,10 @@ var LibraryOpenAL = {
     };
     var onSuccess = function(mediaStream) {
       newCapture.mediaStreamSourceNode = newCapture.audioCtx.createMediaStreamSource(mediaStream);
+      newCapture.mediaStream = mediaStream;
 
       var inputChannelCount = 1;
-      switch(newCapture.mediaStreamSourceNode.channelCountMode) {
+      switch (newCapture.mediaStreamSourceNode.channelCountMode) {
       case 'max':
         inputChannelCount = outputChannelCount;
         break;
@@ -1911,6 +1917,13 @@ var LibraryOpenAL = {
     if (c.splitterNode) c.splitterNode.disconnect();
     // May happen if user hasn't decided to grant or deny input
     if (c.scriptProcessorNode) c.scriptProcessorNode.disconnect();
+    if (c.mediaStream) {
+      // Disabling the microphone of the browser.
+      // Without this operation, the red dot on the browser tab page will remain.
+      c.mediaStream.getTracks().forEach(function(track) {
+        track.stop();
+      });
+    }
 
     delete c.buffers;
 
@@ -1970,8 +1983,14 @@ var LibraryOpenAL = {
     // Also, spec says :
     //   Requesting more sample frames than are currently available is 
     //   an error.
+
+    var dstfreq = c.requestedSampleRate;
+    var srcfreq = c.audioCtx.sampleRate;
+
+    var fratio = srcfreq / dstfreq;
+    
     if (requestedFrameCount < 0
-    ||  requestedFrameCount > c.capturedFrameCount) 
+    ||  requestedFrameCount > (c.capturedFrameCount / fratio)) 
     {
   // if OPENAL_DEBUG
       console.error('alcCaptureSamples() with invalid bufferSize');
@@ -1992,7 +2011,7 @@ var LibraryOpenAL = {
 
     var setSample;
 
-    switch(c.requestedSampleType) {
+    switch (c.requestedSampleType) {
     case 'f32': setSample = setF32Sample; break;
     case 'i16': setSample = setI16Sample; break;
     case 'u8' : setSample = setU8Sample ; break;
@@ -2002,16 +2021,14 @@ var LibraryOpenAL = {
 #endif
       return;
     }
-
-    var dstfreq = c.requestedSampleRate;
-    var srcfreq = c.audioCtx.sampleRate;
-
-    if (srcfreq == dstfreq) {
+    
+    // If fratio is an integer we don't need linear resampling, just skip samples
+    if (Math.floor(fratio) == fratio) {
       for (var i = 0, frame_i = 0; frame_i < requestedFrameCount; ++frame_i) {
         for (var chan = 0; chan < c.buffers.length; ++chan, ++i) {
-          var src_i = (frame_i + c.capturePlayhead) % c.capturedFrameCount;
-          setSample(i, c.buffers[chan][src_i]);
+          setSample(i, c.buffers[chan][c.captureReadhead]);
         }
+        c.captureReadhead = (fratio + c.captureReadhead) % c.bufferFrameCapacity;
       }
     } else {
       // Perform linear resampling.
@@ -2020,23 +2037,16 @@ var LibraryOpenAL = {
       // We don't use OfflineAudioContexts for this: See the discussion at
       // https://github.com/jpernst/emscripten/issues/2#issuecomment-312729735
       // if you're curious about why.
-
-      var lerp = function(from, to, progress) {
-        return (1 - progress) * from + progress * to;
-      };
-
       for (var i = 0, frame_i = 0; frame_i < requestedFrameCount; ++frame_i) {
-
-        var t = frame_i / dstfreq; // Most exact time for the current output sample
-        var src_i = (Math.floor(t*srcfreq) + c.capturePlayhead) % c.capturedFrameCount;
-        var src_next_i = (src_i+1) % c.capturedFrameCount;
-        var between = t*srcfreq - src_i; //(t - src_i/srcfreq) / ((src_i+1)/srcfreq - src_i/srcfreq);
-
+        var lefti = Math.floor(c.captureReadhead);
+        var righti = Math.ceil(c.captureReadhead);
+        var d = c.captureReadhead - lefti;
         for (var chan = 0; chan < c.buffers.length; ++chan, ++i) {
-          var cb = c.buffers[chan];
-          var sample = lerp(cb[src_i], cb[src_next_i], between);
-          setSample(i, sample);
+          var lefts = c.buffers[chan][lefti];
+          var rights = c.buffers[chan][righti];
+          setSample(i, (1 - d) * lefts + d * rights);
         }
+        c.captureReadhead = (c.captureReadhead + fratio) % c.bufferFrameCapacity;
       }
     }
 
@@ -2082,6 +2092,7 @@ var LibraryOpenAL = {
     return 1 /* ALC_TRUE */;
   },
 
+  alcCreateContext__deps: ['$autoResumeAudioContext'],
   alcCreateContext__proxy: 'sync',
   alcCreateContext__sig: 'iii',
   alcCreateContext: function(deviceId, pAttrList) {
@@ -2179,6 +2190,8 @@ var LibraryOpenAL = {
 
       return 0;
     }
+
+    autoResumeAudioContext(ac);
 
     // Old Web Audio API (e.g. Safari 6.0.5) had an inconsistently named createGainNode function.
     if (typeof(ac.createGain) === 'undefined') {
@@ -2301,7 +2314,9 @@ var LibraryOpenAL = {
   },
 
   // The spec is vague about what these are actually supposed to do, and NOP is a reasonable implementation
+  alcProcessContext__sig: 'vi',
   alcProcessContext: function(contextId) {},
+  alcSuspendContext__sig: 'vi',
   alcSuspendContext: function(contextId) {},
 
   alcIsExtensionPresent__proxy: 'sync',
@@ -2310,20 +2325,6 @@ var LibraryOpenAL = {
     var name = UTF8ToString(pExtName);
 
     return AL.ALC_EXTENSIONS[name] ? 1 : 0;
-  },
-
-  alcGetProcAddress__deps: ['emscripten_GetAlcProcAddress'],
-  alcGetProcAddress__proxy: 'sync',
-  alcGetProcAddress__sig: 'iii',
-  alcGetProcAddress: function(deviceId, pProcName) {
-    if (!pProcName) {
-#if OPENAL_DEBUG
-      console.error('alcGetProcAddress() called with null name pointer');
-#endif
-      AL.alcErr = 0xA004 /* ALC_INVALID_VALUE */;
-      return 0; /* ALC_NONE */
-    }
-    return _emscripten_GetAlcProcAddress(pProcName);
   },
 
   alcGetEnumValue__proxy: 'sync',
@@ -2345,7 +2346,7 @@ var LibraryOpenAL = {
     }
     name = UTF8ToString(pEnumName);
     // See alGetEnumValue(), but basically behave the same as OpenAL-Soft
-    switch(name) {
+    switch (name) {
     case 'ALC_NO_ERROR': return 0;
     case 'ALC_INVALID_DEVICE': return 0xA001;
     case 'ALC_INVALID_CONTEXT': return 0xA002;
@@ -2466,7 +2467,7 @@ var LibraryOpenAL = {
       return 0;
     }
 
-    ret = allocate(intArrayFromString(ret), 'i8', ALLOC_NORMAL);
+    ret = allocate(intArrayFromString(ret), ALLOC_NORMAL);
     AL.alcStringCache[param] = ret;
     return ret;
   },
@@ -2479,7 +2480,7 @@ var LibraryOpenAL = {
       return;
     }
 
-    switch(param) {
+    switch (param) {
     case 0x1000 /* ALC_MAJOR_VERSION */:
       {{{ makeSetValue('pValues', '0', '1', 'i32') }}};
       break;
@@ -2687,7 +2688,7 @@ var LibraryOpenAL = {
       }
     }
 
-    ret = allocate(intArrayFromString(ret), 'i8', ALLOC_NORMAL);
+    ret = allocate(intArrayFromString(ret), ALLOC_NORMAL);
     AL.alcStringCache[param] = ret;
     return ret;
   },
@@ -2931,26 +2932,6 @@ var LibraryOpenAL = {
     return AL.AL_EXTENSIONS[name] ? 1 : 0;
   },
 
-  alGetProcAddress__deps: ['emscripten_GetAlProcAddress'],
-  alGetProcAddress__proxy: 'sync',
-  alGetProcAddress__sig: 'vi',
-  alGetProcAddress: function(pProcName) {
-    if (!AL.currentCtx) {
-#if OPENAL_DEBUG
-      console.error('alGetProcAddress() called without a valid context');
-#endif
-      return;
-    }
-    if (!pProcName) {
-#if OPENAL_DEBUG
-      console.error('alcGetProcAddress() called with null name pointer');
-#endif
-      AL.currentCtx.err = 0xA003 /* AL_INVALID_VALUE */;
-      return 0; /* ALC_NONE */
-    }
-    return _emscripten_GetAlProcAddress(pProcName);
-  },
-
   alGetEnumValue__proxy: 'sync',
   alGetEnumValue__sig: 'ii',
   alGetEnumValue: function(pEnumName) {
@@ -2970,7 +2951,7 @@ var LibraryOpenAL = {
     }
     name = UTF8ToString(pEnumName);
 
-    switch(name) {
+    switch (name) {
     // Spec doesn't clearly state that alGetEnumValue() is required to
     // support _only_ extension tokens.
     // We should probably follow OpenAL-Soft's example and support all
@@ -3119,7 +3100,7 @@ var LibraryOpenAL = {
       return 0;
     }
 
-    ret = allocate(intArrayFromString(ret), 'i8', ALLOC_NORMAL);
+    ret = allocate(intArrayFromString(ret), ALLOC_NORMAL);
     AL.stringCache[param] = ret;
     return ret;
   },

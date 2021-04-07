@@ -3,18 +3,16 @@
 # University of Illinois/NCSA Open Source License.  Both these licenses can be
 # found in the LICENSE file.
 
-from __future__ import print_function
-from .toolchain_profiler import ToolchainProfiler
-import os
-import shutil
+import contextlib
 import logging
-from . import tempfiles, filelock
+import os
+from . import tempfiles, filelock, config, utils
 
 logger = logging.getLogger('cache')
 
 
 # Permanent cache for system librarys and ports
-class Cache(object):
+class Cache:
   # If EM_EXCLUSIVE_CACHE_ACCESS is true, this process is allowed to have direct
   # access to the Emscripten cache without having to obtain an interprocess lock
   # for it. Generally this is false, and this is used in the case that
@@ -25,39 +23,24 @@ class Cache(object):
   # acquired.
   EM_EXCLUSIVE_CACHE_ACCESS = int(os.environ.get('EM_EXCLUSIVE_CACHE_ACCESS', '0'))
 
-  def __init__(self, use_subdir=True):
+  def __init__(self, dirname):
     # figure out the root directory for all caching
-    dirname = os.environ.get('EM_CACHE')
-    if dirname:
-      dirname = os.path.normpath(dirname)
-    if not dirname:
-      dirname = os.path.expanduser(os.path.join('~', '.emscripten_cache'))
-    self.root_dirname = dirname
-
-    def try_remove_ending(thestring, ending):
-      if thestring.endswith(ending):
-        return thestring[:-len(ending)]
-      return thestring
-
-    self.filelock_name = try_remove_ending(try_remove_ending(dirname, '/'), '\\') + '.lock'
-    self.filelock = filelock.FileLock(self.filelock_name)
-
-    # if relevant, use a subdir of the cache
-    if use_subdir:
-      if shared.Settings.WASM_BACKEND:
-        subdir = 'wasm'
-        if shared.Settings.LTO:
-          subdir += '-lto'
-        if shared.Settings.RELOCATABLE:
-          subdir += '-pic'
-      else:
-        subdir = 'asmjs'
-      dirname = os.path.join(dirname, subdir)
-
+    dirname = os.path.normpath(dirname)
     self.dirname = dirname
     self.acquired_count = 0
 
+    # since the lock itself lives inside the cache directory we need to ensure it
+    # exists.
+    self.ensure()
+    self.filelock_name = os.path.join(dirname, 'cache.lock')
+    self.filelock = filelock.FileLock(self.filelock_name)
+
   def acquire_cache_lock(self):
+    if config.FROZEN_CACHE:
+      # Raise an exception here rather than exit_with_error since in practice this
+      # should never happen
+      raise Exception('Attempt to lock the cache but FROZEN_CACHE is set')
+
     if not self.EM_EXCLUSIVE_CACHE_ACCESS and self.acquired_count == 0:
       logger.debug('PID %s acquiring multiprocess file lock to Emscripten cache at %s' % (str(os.getpid()), self.dirname))
       try:
@@ -84,42 +67,86 @@ class Cache(object):
       self.filelock.release()
       logger.debug('PID %s released multiprocess file lock to Emscripten cache at %s' % (str(os.getpid()), self.dirname))
 
-  def ensure(self):
+  @contextlib.contextmanager
+  def lock(self):
+    """A context manager that performs actions in the given directory."""
     self.acquire_cache_lock()
     try:
-      shared.safe_ensure_dirs(self.dirname)
+      yield
     finally:
       self.release_cache_lock()
 
-  def erase(self):
-    tempfiles.try_delete(self.root_dirname)
-    self.filelock = None
-    tempfiles.try_delete(self.filelock_name)
-    self.filelock = filelock.FileLock(self.filelock_name)
+  def ensure(self):
+    utils.safe_ensure_dirs(self.dirname)
 
-  def get_path(self, shortname):
-    return os.path.join(self.dirname, shortname)
+  def erase(self):
+    with self.lock():
+      if os.path.exists(self.dirname):
+        for f in os.listdir(self.dirname):
+          tempfiles.try_delete(os.path.join(self.dirname, f))
+
+  def get_path(self, name):
+    return os.path.join(self.dirname, name)
+
+  def get_sysroot_dir(self, absolute):
+    if absolute:
+      return os.path.join(self.dirname, 'sysroot')
+    return 'sysroot'
+
+  def get_include_dir(self):
+    return os.path.join(self.get_sysroot_dir(absolute=True), 'include')
+
+  def get_lib_dir(self, absolute):
+    path = os.path.join(self.get_sysroot_dir(absolute=absolute), 'lib')
+    if shared.Settings.MEMORY64:
+      path = os.path.join(path, 'wasm64-emscripten')
+    else:
+      path = os.path.join(path, 'wasm32-emscripten')
+    # if relevant, use a subdir of the cache
+    subdir = []
+    if shared.Settings.LTO:
+      subdir.append('lto')
+    if shared.Settings.RELOCATABLE:
+      subdir.append('pic')
+    if subdir:
+      path = os.path.join(path, '-'.join(subdir))
+    return path
+
+  def get_lib_name(self, name):
+    return os.path.join(self.get_lib_dir(absolute=False), name)
+
+  def erase_lib(self, name):
+    self.erase_file(self.get_lib_name(name))
 
   def erase_file(self, shortname):
-    name = os.path.join(self.dirname, shortname)
-    if os.path.exists(name):
-      logging.info('Cache: deleting cached file: %s', name)
-      tempfiles.try_delete(name)
+    with self.lock():
+      name = os.path.join(self.dirname, shortname)
+      if os.path.exists(name):
+        logger.info('deleting cached file: %s', name)
+        tempfiles.try_delete(name)
+
+  def get_lib(self, libname, *args, **kwargs):
+    name = self.get_lib_name(libname)
+    return self.get(name, *args, **kwargs)
 
   # Request a cached file. If it isn't in the cache, it will be created with
   # the given creator function
   def get(self, shortname, creator, what=None, force=False):
-    cachename = os.path.abspath(os.path.join(self.dirname, shortname))
+    cachename = os.path.join(self.dirname, shortname)
+    cachename = os.path.abspath(cachename)
+    # Check for existence before taking the lock in case we can avoid the
+    # lock completely.
+    if os.path.exists(cachename) and not force:
+      return cachename
 
-    self.acquire_cache_lock()
-    try:
+    if config.FROZEN_CACHE:
+      # Raise an exception here rather than exit_with_error since in practice this
+      # should never happen
+      raise Exception('FROZEN_CACHE is set, but cache file is missing: %s' % shortname)
+
+    with self.lock():
       if os.path.exists(cachename) and not force:
         return cachename
-      # it doesn't exist yet, create it
-      if shared.FROZEN_CACHE:
-        # it's ok to build small .txt marker files like "vanilla"
-        if not shortname.endswith('.txt'):
-          raise Exception('FROZEN_CACHE disallows building system libs: %s' % shortname)
       if what is None:
         if shortname.endswith(('.bc', '.so', '.a')):
           what = 'system library'
@@ -127,44 +154,12 @@ class Cache(object):
           what = 'system asset'
       message = 'generating ' + what + ': ' + shortname + '... (this will be cached in "' + cachename + '" for subsequent builds)'
       logger.info(message)
-      self.ensure()
-      temp = creator()
-      if os.path.normcase(temp) != os.path.normcase(cachename):
-        shared.safe_ensure_dirs(os.path.dirname(cachename))
-        shutil.copyfile(temp, cachename)
+      utils.safe_ensure_dirs(os.path.dirname(cachename))
+      creator(cachename)
+      assert os.path.exists(cachename)
       logger.info(' - ok')
-    finally:
-      self.release_cache_lock()
 
     return cachename
 
 
-# Given a set of functions of form (ident, text), and a preferred chunk size,
-# generates a set of chunks for parallel processing and caching.
-def chunkify(funcs, chunk_size, DEBUG=False):
-  with ToolchainProfiler.profile_block('chunkify'):
-    chunks = []
-    # initialize reasonably, the rest of the funcs we need to split out
-    curr = []
-    total_size = 0
-    for i in range(len(funcs)):
-      func = funcs[i]
-      curr_size = len(func[1])
-      if total_size + curr_size < chunk_size:
-        curr.append(func)
-        total_size += curr_size
-      else:
-        chunks.append(curr)
-        curr = [func]
-        total_size = curr_size
-    if curr:
-      chunks.append(curr)
-      curr = None
-    return [''.join(func[1] for func in chunk) for chunk in chunks] # remove function names
-
-
-try:
-  from . import shared
-except ImportError:
-  # Python 2 circular import compatibility
-  import shared
+from . import shared

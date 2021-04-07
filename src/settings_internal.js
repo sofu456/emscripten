@@ -11,7 +11,7 @@
 // and can be added/removed/renamed without fear of breaking out users.
 //
 
-// An array of all symbols exported from asm.js/wasm module.
+// An array of all symbols exported from the wasm module.
 var MODULE_EXPORTS = [];
 
 // stores the base name of the output file (-o TARGET_BASENAME.js)
@@ -62,22 +62,8 @@ var EMBIND = 0;
 // Whether the main() function reads the argc/argv parameters.
 var MAIN_READS_PARAMS = 1;
 
-// The computed location of the pointer to the sbrk position.
-var DYNAMICTOP_PTR = -1;
-
-// The computed initial value of the program break (the sbrk position), which
-// is called DYNAMIC_BASE as it is the start of dynamically-allocated memory.
-var DYNAMIC_BASE = -1;
-
-// Maximum seen global alignment; received from the backend.
-var MAX_GLOBAL_ALIGN = -1;
-
 // List of functions implemented in compiled code; received from the backend.
 var IMPLEMENTED_FUNCTIONS = [];
-
-// List of weakly undefined externals; received from the backend
-// fastcomp-only
-var WEAK_DECLARES = [];
 
 // Name of the file containing the Fetch *.fetch.js, if relevant
 var FETCH_WORKER_FILE = '';
@@ -112,20 +98,11 @@ var PROFILING_FUNCS = 0;
 // Whether we are emitting a symbol map. You should not modify this.
 var EMIT_SYMBOL_MAP = 0;
 
-// tracks the list of EM_ASM signatures that are proxied between threads.
-var PROXIED_FUNCTION_SIGNATURES = [];
-
 // List of function explicitly exported by user on the command line.
 var USER_EXPORTED_FUNCTIONS = [];
 
-// name of the file containing wasm text, if relevant
-var WASM_TEXT_FILE = '';
-
 // name of the file containing wasm binary, if relevant
 var WASM_BINARY_FILE = '';
-
-// name of the file containing asm.js code, if relevant
-var ASMJS_CODE_FILE = '';
 
 // name of the file containing the pthread *.worker.js, if relevant
 var PTHREAD_WORKER_FILE = '';
@@ -138,14 +115,6 @@ var MEM_INIT_IN_WASM = 0;
 // If set to 1, src/base64Utils.js will be included in the bundle.
 // This is set internally when needed (SINGLE_FILE)
 var SUPPORT_BASE64_EMBEDDING = 0;
-
-// the total static allocation, that is, how much to bump the start of memory
-// for static globals. received from the backend, and possibly increased due
-// to JS static allocations
-var STATIC_BUMP = -1;
-
-// the total initial wasm table size.
-var WASM_TABLE_SIZE = 0;
 
 // the possible environments the code may run in.
 var ENVIRONMENT_MAY_BE_WEB = 1;
@@ -160,21 +129,16 @@ var MINIFY_WASM_IMPORTS_AND_EXPORTS = 0;
 // Whether to minify imported module names.
 var MINIFY_WASM_IMPORTED_MODULES = 0;
 
-// passes information to emscripten.py about whether to minify
-// JS -> asm.js import names. Controlled by optimization level, enabled
-// at -O1 and higher, but disabled at -g2 and higher.
-var MINIFY_ASMJS_IMPORT_NAMES = 0;
-
 // Whether to minify functions exported from Asm.js/Wasm module.
 var MINIFY_ASMJS_EXPORT_NAMES = 1;
 
 // Internal: represents a browser version that is not supported at all.
 var TARGET_NOT_SUPPORTED = 0x7FFFFFFF;
 
-// Wasm backend does not apply C name mangling (== prefix with an underscore) to
-// the following functions. (it also does not mangle any function that starts with
-// string "dynCall_")
-var WASM_FUNCTIONS_THAT_ARE_NOT_NAME_MANGLED = ['setTempRet0', 'getTempRet0', 'stackAlloc', 'stackSave', 'stackRestore', '__growWasmMemory', '__heap_base', '__data_end'];
+// Wasm backend symbols that are considered system symbols and don't
+// have the normal C symbol name mangled applied (== prefix with an underscore)
+// (Also implicily on this list is any function that starts with string "dynCall_")
+var WASM_SYSTEM_EXPORTS = ['setTempRet0', 'getTempRet0', 'stackAlloc', 'stackSave', 'stackRestore'];
 
 // Internal: value of -flto argument (either full or thin)
 var LTO = 0;
@@ -194,13 +158,30 @@ var SEPARATE_DWARF = 0;
 // New WebAssembly exception handling (experimental)
 var EXCEPTION_HANDLING = 0;
 
-// Enabled when building C++ code (for example via em++ or via -c c++)
-var USE_CXX = 0;
-
 // Used internally when running the JS compiler simply to generate list of all
 // JS symbols. This is used by LLD_REPORT_UNDEFINED to generate a list of all
 // JS library symbols.
 var ONLY_CALC_JS_SYMBOLS = 0;
 
-// Used internally to store the starting value of the stack pointer.
+// Set to true if the program has a main function.  By default this is
+// enabled, but if `--no-entry` is passed, or if `_main` is not part of
+// EXPORTED_FUNCTIONS then this gets set to 0.
+var EXPECT_MAIN = 1;
+
+// Provide and export a .ready() Promise. This is currently used by default with
+// MODULARIZE, and returned from the factory function.
+var EXPORT_READY_PROMISE = 1;
+
+// struct_info that is either generated or cached
+var STRUCT_INFO = '';
+
+// If true, building against Emscripten's wasm heap memory profiler.
+var MEMORYPROFILER = 0;
+
+var GENERATE_SOURCE_MAP = 0;
+
+// Memory layout.  These are only used/set in RELOCATABLE builds.  Otherwise
+// memory layout is fixed in the wasm binary at link time.
 var STACK_BASE = 0;
+var STACK_MAX = 0;
+var HEAP_BASE = 0;

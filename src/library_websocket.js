@@ -10,6 +10,7 @@ var LibraryWebSocket = {
     socketEvent: null
   },
 
+  emscripten_websocket_get_ready_state__deps: ['$WS'],
   emscripten_websocket_get_ready_state__proxy: 'sync',
   emscripten_websocket_get_ready_state__sig: 'iii',
   emscripten_websocket_get_ready_state: function(socketId, readyState) {
@@ -21,10 +22,11 @@ var LibraryWebSocket = {
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
 
-    HEAPU16[readyState>>1] = socket.readyState;
+    {{{ makeSetValue('readyState', '0', 'socket.readyState', 'i16') }}};
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_buffered_amount__deps: ['$WS'],
   emscripten_websocket_get_buffered_amount__proxy: 'sync',
   emscripten_websocket_get_buffered_amount__sig: 'iii',
   emscripten_websocket_get_buffered_amount: function(socketId, bufferedAmount) {
@@ -40,6 +42,7 @@ var LibraryWebSocket = {
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_extensions__deps: ['$WS'],
   emscripten_websocket_get_extensions__proxy: 'sync',
   emscripten_websocket_get_extensions__sig: 'iiii',
   emscripten_websocket_get_extensions: function(socketId, extensions, extensionsLength) {
@@ -50,9 +53,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
+    if (!extensions) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    stringToUTF8(socket.extensions, extensions, extensionsLength);
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_extensions_length__deps: ['$WS'],
   emscripten_websocket_get_extensions_length__proxy: 'sync',
   emscripten_websocket_get_extensions_length__sig: 'iii',
   emscripten_websocket_get_extensions_length: function(socketId, extensionsLength) {
@@ -63,9 +69,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
+    if (!extensionsLength) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    {{{ makeSetValue('extensionsLength', '0', 'lengthBytesUTF8(socket.extensions)+1', 'i32') }}};
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_protocol__deps: ['$WS'],
   emscripten_websocket_get_protocol__proxy: 'sync',
   emscripten_websocket_get_protocol__sig: 'iiii',
   emscripten_websocket_get_protocol: function(socketId, protocol, protocolLength) {
@@ -76,9 +85,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
+    if (!protocol) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    stringToUTF8(socket.protocol, protocol, protocolLength);
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_protocol_length__deps: ['$WS'],
   emscripten_websocket_get_protocol_length__proxy: 'sync',
   emscripten_websocket_get_protocol_length__sig: 'iii',
   emscripten_websocket_get_protocol_length: function(socketId, protocolLength) {
@@ -89,9 +101,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
+    if (!protocolLength) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    {{{ makeSetValue('protocolLength', '0', 'lengthBytesUTF8(socket.protocol)+1', 'i32') }}};
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_url__deps: ['$WS'],
   emscripten_websocket_get_url__proxy: 'sync',
   emscripten_websocket_get_url__sig: 'iiii',
   emscripten_websocket_get_url: function(socketId, url, urlLength) {
@@ -102,9 +117,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
+    if (!url) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    stringToUTF8(socket.url, url, urlLength);
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_get_url_length__deps: ['$WS'],
   emscripten_websocket_get_url_length__proxy: 'sync',
   emscripten_websocket_get_url_length__sig: 'iii',
   emscripten_websocket_get_url_length: function(socketId, urlLength) {
@@ -115,10 +133,12 @@ var LibraryWebSocket = {
 #endif
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_TARGET') }}};
     }
-    HEAPU32[urlLength>>2] = lengthBytesUTF8(socket.url);
+    if (!urlLength) return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
+    {{{ makeSetValue('urlLength', '0', 'lengthBytesUTF8(socket.url)+1', 'i32') }}};
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_set_onopen_callback_on_thread__deps: ['$WS'],
   emscripten_websocket_set_onopen_callback_on_thread__proxy: 'sync',
   emscripten_websocket_set_onopen_callback_on_thread__sig: 'iiiii',
   emscripten_websocket_set_onopen_callback_on_thread: function(socketId, userData, callbackFunc, thread) {
@@ -144,11 +164,12 @@ var LibraryWebSocket = {
       console.error('websocket event "open": socketId='+socketId+',userData='+userData+',callbackFunc='+callbackFunc+')');
 #endif
       HEAPU32[WS.socketEvent>>2] = socketId;
-      {{{ makeDynCall('iiii') }}}(callbackFunc, 0/*TODO*/, WS.socketEvent, userData);
+      {{{ makeDynCall('iiii', 'callbackFunc') }}}(0/*TODO*/, WS.socketEvent, userData);
     }
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_set_onerror_callback_on_thread__deps: ['$WS'],
   emscripten_websocket_set_onerror_callback_on_thread__proxy: 'sync',
   emscripten_websocket_set_onerror_callback_on_thread__sig: 'iiiii',
   emscripten_websocket_set_onerror_callback_on_thread: function(socketId, userData, callbackFunc, thread) {
@@ -170,11 +191,12 @@ var LibraryWebSocket = {
       console.error('websocket event "error": socketId='+socketId+',userData='+userData+',callbackFunc='+callbackFunc+')');
 #endif
       HEAPU32[WS.socketEvent>>2] = socketId;
-      {{{ makeDynCall('iiii') }}}(callbackFunc, 0/*TODO*/, WS.socketEvent, userData);
+      {{{ makeDynCall('iiii', 'callbackFunc') }}}(0/*TODO*/, WS.socketEvent, userData);
     }
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_set_onclose_callback_on_thread__deps: ['$WS'],
   emscripten_websocket_set_onclose_callback_on_thread__proxy: 'sync',
   emscripten_websocket_set_onclose_callback_on_thread__sig: 'iiiii',
   emscripten_websocket_set_onclose_callback_on_thread: function(socketId, userData, callbackFunc, thread) {
@@ -199,11 +221,12 @@ var LibraryWebSocket = {
       HEAPU32[(WS.socketEvent+4)>>2] = e.wasClean;
       HEAPU32[(WS.socketEvent+8)>>2] = e.code;
       stringToUTF8(e.reason, HEAPU32[(WS.socketEvent+10)>>2], 512);
-      {{{ makeDynCall('iiii') }}}(callbackFunc, 0/*TODO*/, WS.socketEvent, userData);
+      {{{ makeDynCall('iiii', 'callbackFunc') }}}(0/*TODO*/, WS.socketEvent, userData);
     }
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_set_onmessage_callback_on_thread__deps: ['$WS'],
   emscripten_websocket_set_onmessage_callback_on_thread__proxy: 'sync',
   emscripten_websocket_set_onmessage_callback_on_thread__sig: 'iiiii',
   emscripten_websocket_set_onmessage_callback_on_thread: function(socketId, userData, callbackFunc, thread) {
@@ -240,9 +263,9 @@ var LibraryWebSocket = {
         HEAP8.set(new Uint8Array(e.data), buf);
 #if WEBSOCKET_DEBUG
         var s = 'WebSocket onmessage, received data: ' + len + ' bytes of binary:';
-        for(var i = 0; i < Math.min(len, 256); ++i) s += ' ' + HEAPU8[buf+i].toString(16);
+        for (var i = 0; i < Math.min(len, 256); ++i) s += ' ' + HEAPU8[buf+i].toString(16);
         s += ', "';
-        for(var i = 0; i < Math.min(len, 256); ++i) s += (HEAPU8[buf+i] >= 32 && HEAPU8[buf+i] <= 127) ? String.fromCharCode(HEAPU8[buf+i]) : '\uFFFD';
+        for (var i = 0; i < Math.min(len, 256); ++i) s += (HEAPU8[buf+i] >= 32 && HEAPU8[buf+i] <= 127) ? String.fromCharCode(HEAPU8[buf+i]) : '\uFFFD';
         s += '"';
         if (len > 256) s + ' ... (' + (len - 256) + ' more bytes)';
 
@@ -252,7 +275,7 @@ var LibraryWebSocket = {
       }
       HEAPU32[(WS.socketEvent+4)>>2] = buf;
       HEAPU32[(WS.socketEvent+8)>>2] = len;
-      {{{ makeDynCall('iiii') }}}(callbackFunc, 0/*TODO*/, WS.socketEvent, userData);
+      {{{ makeDynCall('iiii', 'callbackFunc') }}}(0/*TODO*/, WS.socketEvent, userData);
       _free(buf);
     }
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
@@ -275,22 +298,26 @@ var LibraryWebSocket = {
       return {{{ cDefine('EMSCRIPTEN_RESULT_INVALID_PARAM') }}};
     }
 
-    var url = UTF8ToString(HEAP32[createAttributes>>2]);
+    var createAttrs = createAttributes>>2;
+    var url = UTF8ToString(HEAP32[createAttrs]);
+    var protocols = HEAP32[createAttrs+1];
+    // TODO: Add support for createOnMainThread==false; currently all WebSocket connections are created on the main thread.
+    // var createOnMainThread = HEAP32[createAttrs+2];
 
-    // TODO: protocols
-    // TODO: createOnMainThread
-    var socket = new WebSocket(url);
+    var socket = protocols ? new WebSocket(url, UTF8ToString(protocols).split(',')) : new WebSocket(url);
+    // We always marshal received WebSocket data back to Wasm, so enable receiving the data as arraybuffers for easy marshalling.
     socket.binaryType = 'arraybuffer';
     // TODO: While strictly not necessary, this ID would be good to be unique across all threads to avoid confusion.
     var socketId = WS.sockets.length;
     WS.sockets[socketId] = socket;
 
 #if WEBSOCKET_DEBUG
-    console.error('emscripten_websocket_new(url='+url+'): created socket ID ' + socketId + ')');
+    console.error('emscripten_websocket_new(url='+url+', protocols=' + (protocols?UTF8ToString(protocols).split(','):'null') + '): created socket ID ' + socketId + ')');
 #endif
     return socketId;
   },
 
+  emscripten_websocket_send_utf8_text__deps: ['$WS'],
   emscripten_websocket_send_utf8_text__proxy: 'sync',
   emscripten_websocket_send_utf8_text__sig: 'iii',
   emscripten_websocket_send_utf8_text: function(socketId, textData) {
@@ -314,6 +341,7 @@ var LibraryWebSocket = {
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_send_binary__deps: ['$WS'],
   emscripten_websocket_send_binary__proxy: 'sync',
   emscripten_websocket_send_binary__sig: 'iiii',
   emscripten_websocket_send_binary: function(socketId, binaryData, dataLength) {
@@ -327,9 +355,9 @@ var LibraryWebSocket = {
 
 #if WEBSOCKET_DEBUG
     var s = 'data: ' + dataLength + ' bytes of binary:';
-    for(var i = 0; i < Math.min(dataLength, 256); ++i) s += ' '+ HEAPU8[binaryData+i].toString(16);
+    for (var i = 0; i < Math.min(dataLength, 256); ++i) s += ' '+ HEAPU8[binaryData+i].toString(16);
     s += ', "';
-    for(var i = 0; i < Math.min(dataLength, 256); ++i) s += (HEAPU8[binaryData+i] >= 32 && HEAPU8[binaryData+i] <= 127) ? String.fromCharCode(HEAPU8[binaryData+i]) : '\uFFFD';
+    for (var i = 0; i < Math.min(dataLength, 256); ++i) s += (HEAPU8[binaryData+i] >= 32 && HEAPU8[binaryData+i] <= 127) ? String.fromCharCode(HEAPU8[binaryData+i]) : '\uFFFD';
     s += '"';
     if (dataLength > 256) s + ' ... (' + (dataLength - 256) + ' more bytes)';
 
@@ -345,6 +373,7 @@ var LibraryWebSocket = {
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_close__deps: ['$WS'],
   emscripten_websocket_close__proxy: 'sync',
   emscripten_websocket_close__sig: 'iiii',
   emscripten_websocket_close: function(socketId, code, reason) {
@@ -360,11 +389,18 @@ var LibraryWebSocket = {
 #if WEBSOCKET_DEBUG
     console.error('emscripten_websocket_close(socketId='+socketId+',code='+code+',reason='+reasonStr+')');
 #endif
-    if (!code) code = undefined;
-    socket.close(code, reasonStr);
+    // According to WebSocket specification, only close codes that are recognized have integer values
+    // 1000-4999, with 3000-3999 and 4000-4999 denoting user-specified close codes:
+    // https://developer.mozilla.org/en-US/docs/Web/API/CloseEvent#Status_codes
+    // Therefore be careful to call the .close() function with exact number and types of parameters.
+    // Coerce code==0 to undefined, since Wasm->JS call can only marshal integers, and 0 is not allowed.
+    if (reason) socket.close(code || undefined, UTF8ToString(reason));
+    else if (code) socket.close(code);
+    else socket.close();
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
+  emscripten_websocket_delete__deps: ['$WS'],
   emscripten_websocket_delete__proxy: 'sync',
   emscripten_websocket_delete__sig: 'ii',
   emscripten_websocket_delete: function(socketId) {
@@ -380,7 +416,7 @@ var LibraryWebSocket = {
     console.error('emscripten_websocket_delete(socketId='+socketId+')');
 #endif
     socket.onopen = socket.onerror = socket.onclose = socket.onmessage = null;
-    socket = null;
+    delete WS.sockets[socket];
     return {{{ cDefine('EMSCRIPTEN_RESULT_SUCCESS') }}};
   },
 
@@ -390,6 +426,7 @@ var LibraryWebSocket = {
     return typeof WebSocket !== 'undefined';
   },
 
+  emscripten_websocket_deinitialize__deps: ['$WS'],
   emscripten_websocket_deinitialize__proxy: 'sync',
   emscripten_websocket_deinitialize__sig: 'v',
   emscripten_websocket_deinitialize__deps: ['emscripten_websocket_delete'],
@@ -397,13 +434,14 @@ var LibraryWebSocket = {
 #if WEBSOCKET_DEBUG
     console.error('emscripten_websocket_deinitialize()');
 #endif
-    for(var i in WS.sockets) {
+    for (var i in WS.sockets) {
       var socket = WS.sockets[i];
       if (socket) {
         socket.close();
         _emscripten_websocket_delete(i);
       }
     }
+    WS.sockets = [];
   }
 }
 

@@ -4,7 +4,7 @@
 preamble.js
 ===========
 
-The JavaScript APIs in `preamble.js <https://github.com/emscripten-core/emscripten/blob/master/src/preamble.js>`_ provide programmatic access for interacting with the compiled C code, including: calling compiled C functions, accessing memory, converting pointers to JavaScript ``Strings`` and ``Strings`` to pointers (with different encodings/formats), and other convenience functions.
+The JavaScript APIs in `preamble.js <https://github.com/emscripten-core/emscripten/blob/main/src/preamble.js>`_ provide programmatic access for interacting with the compiled C code, including: calling compiled C functions, accessing memory, converting pointers to JavaScript ``Strings`` and ``Strings`` to pointers (with different encodings/formats), and other convenience functions.
 
 We call this "``preamble.js``" because Emscripten's output JS, at a high level, contains the preamble (from ``src/preamble.js``), then the compiled code, then the postamble. (In slightly more detail, the preamble contains utility functions and setup, while the postamble connects things and handles running the application.)
 
@@ -70,7 +70,7 @@ Calling compiled C functions from JavaScript
   :returns: The result of the function call as a native JavaScript value (as in ``returnType``) or, if the ``async`` option is set, a JavaScript Promise of the result.
   :opts: An optional options object. It can contain the following properties:
 
-      - ``async``: If ``true``, implies that the ccall will perform an async operation. This assumes you are using the Emterpreter-Async option for your code.
+      - ``async``: If ``true``, implies that the ccall will perform an async operation. This assumes you are build with asyncify support.
 
   .. note:: Async calls currently don't support promise error handling.
 
@@ -404,7 +404,7 @@ The :ref:`emscripten-memory-model` uses a typed array buffer (``ArrayBuffer``) t
 .. COMMENT (not rendered) : The following methods are explicitly not part of the public API and not documented. Note that in some case referred to by function name, other cases by Module assignment.
 
   function allocate(slab, types, allocator, ptr) — Internal and use is discouraged. Documentation can remain in source code but not here.
-    associated contants ALLOC_NORMAL, ALLOC_STACK, ALLOC_DYNAMIC, ALLOC_NONE
+    associated constants ALLOC_NORMAL, ALLOC_STACK
 
   function addOnPreRun
   function addOnInit
@@ -413,8 +413,6 @@ The :ref:`emscripten-memory-model` uses a typed array buffer (``ArrayBuffer``) t
   function addOnPostRun
   Module['ALLOC_NORMAL'] = ALLOC_NORMAL;
   Module['ALLOC_STACK'] = ALLOC_STACK;
-  Module['ALLOC_DYNAMIC'] = ALLOC_DYNAMIC;
-  Module['ALLOC_NONE'] = ALLOC_NONE;
   Module['HEAP'] = HEAP;
   Module['IHEAP'] = IHEAP;
   function alignUp(x, multiple)

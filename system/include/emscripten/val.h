@@ -101,6 +101,7 @@ namespace emscripten {
             bool _emval_in(EM_VAL item, EM_VAL object);
             bool _emval_delete(EM_VAL object, EM_VAL property);
             bool _emval_throw(EM_VAL object);
+            EM_VAL _emval_await(EM_VAL promise);
         }
 
         template<const char* address>
@@ -529,6 +530,10 @@ namespace emscripten {
             internal::_emval_throw(handle);
         }
 
+        val await() const {
+            return val(internal::_emval_await(handle));
+        }
+
     private:
         // takes ownership, assumes handle already incref'd
         explicit val(internal::EM_VAL handle)
@@ -575,15 +580,33 @@ namespace emscripten {
         };
     }
 
-    template<typename T>
-    std::vector<T> vecFromJSArray(val v) {
-        auto l = v["length"].as<unsigned>();
+    template <typename T>
+    std::vector<T> vecFromJSArray(const val& v) {
+        const size_t l = v["length"].as<size_t>();
 
         std::vector<T> rv;
-        for(unsigned i = 0; i < l; ++i) {
+        rv.reserve(l);
+        for (size_t i = 0; i < l; ++i) {
             rv.push_back(v[i].as<T>());
         }
 
         return rv;
-    };
+    }
+
+    template <typename T>
+    std::vector<T> convertJSArrayToNumberVector(const val& v) {
+        const size_t l = v["length"].as<size_t>();
+
+        std::vector<T> rv;
+        rv.resize(l);
+
+        // Copy the array into our vector through the use of typed arrays.
+        // It will try to convert each element through Number().
+        // See https://www.ecma-international.org/ecma-262/6.0/#sec-%typedarray%.prototype.set-array-offset
+        // and https://www.ecma-international.org/ecma-262/6.0/#sec-tonumber
+        val memoryView{ typed_memory_view(l, rv.data()) };
+        memoryView.call<void>("set", v);
+
+        return rv;
+    }
 }

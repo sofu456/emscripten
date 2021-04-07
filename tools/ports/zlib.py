@@ -10,17 +10,18 @@ TAG = 'version_1'
 HASH = '77f7d8f18fe11bb66a57e358325b7422d721f7b506bd63293cfde74079f958864db66ead5a36c311a76dd8c2b089b7659641a5522de650de0f9e6865782a60dd'
 
 
-def get(ports, settings, shared):
-  if settings.USE_ZLIB != 1:
-    return []
+def needed(settings):
+  return settings.USE_ZLIB
 
+
+def get(ports, settings, shared):
   ports.fetch_project('zlib', 'https://github.com/emscripten-ports/zlib/archive/' + TAG + '.zip', 'zlib-' + TAG, sha512hash=HASH)
 
-  def create():
+  def create(final):
     ports.clear_project_build('zlib')
 
     source_path = os.path.join(ports.get_dir(), 'zlib', 'zlib-' + TAG)
-    dest_path = os.path.join(shared.Cache.get_path('ports-builds'), 'zlib')
+    dest_path = os.path.join(ports.get_build_dir(), 'zlib')
     shared.try_delete(dest_path)
     os.makedirs(dest_path)
     shutil.rmtree(dest_path, ignore_errors=True)
@@ -35,25 +36,21 @@ def get(ports, settings, shared):
     for src in srcs:
       o = os.path.join(ports.get_build_dir(), 'zlib', src + '.o')
       shared.safe_ensure_dirs(os.path.dirname(o))
-      commands.append([shared.PYTHON, shared.EMCC, os.path.join(dest_path, src), '-O2', '-o', o, '-I' + dest_path, '-w', '-c'])
+      commands.append([shared.EMCC, os.path.join(dest_path, src), '-O2', '-o', o, '-I' + dest_path, '-w', '-c'])
       o_s.append(o)
     ports.run_commands(commands)
 
-    final = os.path.join(ports.get_build_dir(), 'zlib', 'libz.a')
     ports.create_lib(final, o_s)
-    return final
 
-  return [shared.Cache.get('libz.a', create, what='port')]
-
-
-def clear(ports, shared):
-  shared.Cache.erase_file('libz.a')
+  return [shared.Cache.get_lib('libz.a', create, what='port')]
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_ZLIB == 1:
-    get(ports, settings, shared)
-  return args
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib('libz.a')
+
+
+def process_args(ports):
+  return []
 
 
 def show():

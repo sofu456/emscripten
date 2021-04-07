@@ -4,14 +4,40 @@
  * SPDX-License-Identifier: MIT
  */
 
+// Specifies the size of the GL temp buffer pool, in bytes. Must be a multiple
+// of 9 and 16.
+{{{ GL_POOL_TEMP_BUFFERS_SIZE = 2*9*16 }}} // = 288
+
+{{{
+  global.isCurrentContextWebGL2 = function isCurrentContextWebGL2() {
+    if (MIN_WEBGL_VERSION >= 2) return 'true';
+    if (MAX_WEBGL_VERSION <= 1) return 'false';
+    return 'GL.currentContext.version >= 2';
+  }
+}}}
+
 var LibraryGL = {
 
   // For functions such as glDrawBuffers, glInvalidateFramebuffer and glInvalidateSubFramebuffer that need to pass a short array to the WebGL API,
   // create a set of short fixed-length arrays to avoid having to generate any garbage when calling those functions.
-  _tempFixedLengthArray__postset: 'for (var i = 0; i < 32; i++) __tempFixedLengthArray.push(new Array(i));',
-  _tempFixedLengthArray: [],
+  $tempFixedLengthArray__postset: 'for (var i = 0; i < 32; ++i) tempFixedLengthArray.push(new Array(i));',
+  $tempFixedLengthArray: [],
 
-  _heapObjectForWebGLType: function(type) {
+  $miniTempWebGLFloatBuffers: [],
+  $miniTempWebGLFloatBuffers__postset:
+      'var miniTempWebGLFloatBuffersStorage = new Float32Array(' + {{{ GL_POOL_TEMP_BUFFERS_SIZE }}} + ');\n'
+    + 'for (/**@suppress{duplicate}*/var i = 0; i < ' + {{{ GL_POOL_TEMP_BUFFERS_SIZE }}} + '; ++i) {\n'
+    + 'miniTempWebGLFloatBuffers[i] = miniTempWebGLFloatBuffersStorage.subarray(0, i+1);\n'
+    + '}\n',
+
+  _miniTempWebGLIntBuffers: [],
+  _miniTempWebGLIntBuffers__postset:
+      'var __miniTempWebGLIntBuffersStorage = new Int32Array(' + {{{ GL_POOL_TEMP_BUFFERS_SIZE }}} + ');\n'
+    + 'for (/**@suppress{duplicate}*/var i = 0; i < ' + {{{ GL_POOL_TEMP_BUFFERS_SIZE }}} + '; ++i) {\n'
+    + '__miniTempWebGLIntBuffers[i] = __miniTempWebGLIntBuffersStorage.subarray(0, i+1);\n'
+    + '}\n',
+
+  $heapObjectForWebGLType: function(type) {
     // Micro-optimization for size: Subtract lowest GL enum number (0x1400/* GL_BYTE */) from type to compare
     // smaller values for the heap, for shorter generated code size.
     // Also the type HEAPU16 is not tested for explicitly, but any unrecognized type will return out HEAPU16.
@@ -50,13 +76,13 @@ var LibraryGL = {
         && type != {{{ 0x8034 - 0x1400 /* GL_UNSIGNED_SHORT_5_5_5_1 */ }}}
         && type != {{{ 0x8363 - 0x1400 /* GL_UNSIGNED_SHORT_5_6_5 */ }}}
         && type != {{{ 0x8D61 - 0x1400 /* GL_HALF_FLOAT_OES */ }}}) {
-        err('Invalid WebGL type 0x' + (type+0x1400).toString() + ' passed to _heapObjectForWebGLType!');
+        err('Invalid WebGL type 0x' + (type+0x1400).toString() + ' passed to $heapObjectForWebGLType!');
       }
 #endif
     return HEAPU16;
   },
 
-  _heapAccessShiftForWebGLHeap: function(heap) {
+  $heapAccessShiftForWebGLHeap: function(heap) {
     return 31 - Math.clz32(heap.BYTES_PER_ELEMENT);
   },
 
@@ -109,7 +135,17 @@ var LibraryGL = {
   },
 #endif
 
-  $GL__postset: 'var GLctx; GL.init()',
+  _webgl_enable_WEBGL_multi_draw: function(ctx) {
+    // Closure is expected to be allowed to minify the '.multiDrawWebgl' property, so not accessing it quoted.
+    return !!(ctx.multiDrawWebgl = ctx.getExtension('WEBGL_multi_draw'));
+  },
+
+  emscripten_webgl_enable_WEBGL_multi_draw__deps: ['_webgl_enable_WEBGL_multi_draw'],
+  emscripten_webgl_enable_WEBGL_multi_draw: function(ctx) {
+    return __webgl_enable_WEBGL_multi_draw(GL.contexts[ctx].GLctx);
+  },
+
+  $GL__postset: 'var GLctx;',
 #if GL_SUPPORT_AUTOMATIC_ENABLE_EXTENSIONS
   // If GL_SUPPORT_AUTOMATIC_ENABLE_EXTENSIONS is enabled, GL.initExtensions() will call to initialize these.
   $GL__deps: [
@@ -120,7 +156,9 @@ var LibraryGL = {
 #endif
 #if MAX_WEBGL_VERSION >= 2
     '_webgl_enable_WEBGL_draw_instanced_base_vertex_base_instance',
+    '_webgl_enable_WEBGL_multi_draw_instanced_base_vertex_base_instance',
 #endif
+    '_webgl_enable_WEBGL_multi_draw',
     ],
 #endif
   $GL: {
@@ -128,17 +166,29 @@ var LibraryGL = {
     debug: true,
 #endif
 
-    counter: 1, // 0 is reserved as 'null' in gl
+/* We do not depend on the exact initial values of falsey member fields - these fields can be populated on-demand
+   to save code size.
+   (but still documented here to keep track of what is supposed to be present)
 #if GL_TRACK_ERRORS
     lastError: 0,
 #endif
+    currentContext: null,
+
+#if FULL_ES2 || LEGACY_GL_EMULATION
+    currArrayBuffer: 0,
+    currElementArrayBuffer: 0,
+#endif
+*/
+
+    counter: 1, // 0 is reserved as 'null' in gl
     buffers: [],
+#if FULL_ES3
     mappedBuffers: {},
+#endif
     programs: [],
     framebuffers: [],
     renderbuffers: [],
     textures: [],
-    uniforms: [],
     shaders: [],
     vaos: [],
 #if USE_PTHREADS // with pthreads a context is a location in memory with some synchronized data between threads
@@ -146,7 +196,6 @@ var LibraryGL = {
 #else            // without pthreads, it's just an integer ID
     contexts: [],
 #endif
-    currentContext: null,
     offscreenCanvases: {}, // DOM ID -> OffscreenCanvas mappings of <canvas> elements that have their rendering control transferred to offscreen.
     timerQueriesEXT: [],
 #if MAX_WEBGL_VERSION >= 2
@@ -157,9 +206,6 @@ var LibraryGL = {
 #endif
 
 #if FULL_ES2 || LEGACY_GL_EMULATION
-    currArrayBuffer: 0,
-    currElementArrayBuffer: 0,
-
     byteSizeByTypeRoot: 0x1400, // GL_BYTE
     byteSizeByType: [
       1, // GL_BYTE
@@ -176,33 +222,12 @@ var LibraryGL = {
     ],
 #endif
 
-    programInfos: {}, // Stores additional information needed for each shader program. Each entry is of form:
-    /* { uniforms: {}, // Maps ints back to the opaque WebGLUniformLocation objects.
-         maxUniformLength: int, // Cached in order to implement glGetProgramiv(GL_ACTIVE_UNIFORM_MAX_LENGTH)
-         maxAttributeLength: int // Cached in order to implement glGetProgramiv(GL_ACTIVE_ATTRIBUTE_MAX_LENGTH)
-         maxUniformBlockNameLength: int // Cached in order to implement glGetProgramiv(GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH)
-       } */
-
     stringCache: {},
 #if MAX_WEBGL_VERSION >= 2
     stringiCache: {},
 #endif
 
     unpackAlignment: 4, // default alignment is 4 bytes
-
-    init: function() {
-#if GL_POOL_TEMP_BUFFERS
-      var miniTempFloatBuffer = new Float32Array(GL.MINI_TEMP_BUFFER_SIZE);
-      for (var i = 0; i < GL.MINI_TEMP_BUFFER_SIZE; i++) {
-        GL.miniTempBufferFloatViews[i] = miniTempFloatBuffer.subarray(0, i+1);
-      }
-
-      var miniTempIntBuffer = new Int32Array(GL.MINI_TEMP_BUFFER_SIZE);
-      for (var i = 0; i < GL.MINI_TEMP_BUFFER_SIZE; i++) {
-        GL.miniTempBufferIntViews[i] = miniTempIntBuffer.subarray(0, i+1);
-      }
-#endif
-    },
 
     // Records a GL error condition that occurred, stored until user calls glGetError() to fetch it. As per GLES2 spec, only the first error
     // is remembered, and subsequent errors are discarded until the user has cleared the stored error by a call to glGetError().
@@ -222,13 +247,6 @@ var LibraryGL = {
       return ret;
     },
 
-#if GL_POOL_TEMP_BUFFERS
-    // Mini temp buffer
-    MINI_TEMP_BUFFER_SIZE: 256,
-    miniTempBufferFloatViews: [0], // index i has the view of size i+1
-    miniTempBufferIntViews: [0], // index i has the view of size i+1
-#endif
-
 #if FULL_ES2 || LEGACY_GL_EMULATION
     // When user GL code wants to render from client-side memory, we need to upload the vertex data to a temp VBO
     // for rendering. Maintain a set of temp VBOs that are created-on-demand to appropriate sizes, and never destroyed.
@@ -245,7 +263,7 @@ var LibraryGL = {
     // if x was rounded up to next pow2, which index is the single '1' bit at?
     // Then log2ceilLookup[x] returns ceil(log2(x)).
     log2ceilLookup: function(i) {
-      return 32 - Math.clz32(i-1);
+      return 32 - Math.clz32(i === 0 ? 0 : i - 1);
     },
 
     generateTempBuffers: function(quads, context) {
@@ -428,7 +446,7 @@ var LibraryGL = {
 
     postDrawHandleClientVertexAttribBindings: function postDrawHandleClientVertexAttribBindings() {
       if (GL.resetBufferBinding) {
-        GLctx.bindBuffer(0x8892 /*GL_ARRAY_BUFFER*/, GL.buffers[GL.currArrayBuffer]);
+        GLctx.bindBuffer(0x8892 /*GL_ARRAY_BUFFER*/, GL.buffers[GLctx.currentArrayBufferBinding]);
       }
     },
 #endif
@@ -438,15 +456,15 @@ var LibraryGL = {
       if (objectID != 0) {
         if (objectHandleArray[objectID] === null) {
           console.error(callerFunctionName + ' called with an already deleted ' + objectReadableType + ' ID ' + objectID + '!');
-        } else if (!objectHandleArray[objectID]) {
-          console.error(callerFunctionName + ' called with an invalid ' + objectReadableType + ' ID ' + objectID + '!');
+        } else if (!(objectID in objectHandleArray)) {
+          console.error(callerFunctionName + ' called with a nonexisting ' + objectReadableType + ' ID ' + objectID + '!');
         }
       }
     },
     // Validates that user obeys GL spec #6.4: http://www.khronos.org/registry/webgl/specs/latest/1.0/#6.4
     validateVertexAttribPointer: function(dimension, dataType, stride, offset) {
       var sizeBytes = 1;
-      switch(dataType) {
+      switch (dataType) {
         case 0x1400 /* GL_BYTE */:
         case 0x1401 /* GL_UNSIGNED_BYTE */:
           sizeBytes = 1;
@@ -465,7 +483,7 @@ var LibraryGL = {
           break;
         default:
 #if MAX_WEBGL_VERSION >= 2
-          if (GL.currentContext.version >= 2) {
+          if ({{{ isCurrentContextWebGL2() }}}) {
             if (dataType == 0x8368 /* GL_UNSIGNED_INT_2_10_10_10_REV */ || dataType == 0x8D9F /* GL_INT_2_10_10_10_REV */) {
               sizeBytes = 4;
               break;
@@ -497,28 +515,15 @@ var LibraryGL = {
 #endif
 
 #if TRACE_WEBGL_CALLS
-    webGLFunctionLengths: { 'getContextAttributes': 0, 'isContextLost': 0, 'getSupportedExtensions': 0, 'createBuffer': 0, 'createFramebuffer': 0, 'createProgram': 0, 'createRenderbuffer': 0, 'createTexture': 0, 'finish': 0, 'flush': 0, 'getError': 0, 'createVertexArray': 0, 'createQuery': 0, 'createSampler': 0, 'createTransformFeedback': 0, 'endTransformFeedback': 0, 'pauseTransformFeedback': 0, 'resumeTransformFeedback': 0, 'commit': 0,
-      'getExtension': 1, 'activeTexture': 1, 'blendEquation': 1, 'checkFramebufferStatus': 1, 'clear': 1, 'clearDepth': 1, 'clearStencil': 1, 'compileShader': 1, 'createShader': 1, 'cullFace': 1, 'deleteBuffer': 1, 'deleteFramebuffer': 1, 'deleteProgram': 1, 'deleteRenderbuffer': 1, 'deleteShader': 1, 'deleteTexture': 1, 'depthFunc': 1, 'depthMask': 1, 'disable': 1, 'disableVertexAttribArray': 1, 'enable': 1, 'enableVertexAttribArray': 1, 'frontFace': 1, 'generateMipmap': 1, 'getAttachedShaders': 1, 'getParameter': 1, 'getProgramInfoLog': 1, 'getShaderInfoLog': 1, 'getShaderSource': 1, 'isBuffer': 1, 'isEnabled': 1, 'isFramebuffer': 1, 'isProgram': 1, 'isRenderbuffer': 1, 'isShader': 1, 'isTexture': 1, 'lineWidth': 1, 'linkProgram': 1, 'stencilMask': 1, 'useProgram': 1, 'validateProgram': 1, 'deleteQuery': 1, 'isQuery': 1, 'deleteVertexArray': 1, 'bindVertexArray': 1, 'isVertexArray': 1, 'drawBuffers': 1, 'readBuffer': 1, 'endQuery': 1, 'deleteSampler': 1, 'isSampler': 1, 'isSync': 1, 'deleteSync': 1, 'deleteTransformFeedback': 1, 'isTransformFeedback': 1, 'beginTransformFeedback': 1,
-      'attachShader': 2, 'bindBuffer': 2, 'bindFramebuffer': 2, 'bindRenderbuffer': 2, 'bindTexture': 2, 'blendEquationSeparate': 2, 'blendFunc': 2, 'depthRange': 2, 'detachShader': 2, 'getActiveAttrib': 2, 'getActiveUniform': 2, 'getAttribLocation': 2, 'getBufferParameter': 2, 'getProgramParameter': 2, 'getRenderbufferParameter': 2, 'getShaderParameter': 2, 'getShaderPrecisionFormat': 2, 'getTexParameter': 2, 'getUniform': 2, 'getUniformLocation': 2, 'getVertexAttrib': 2, 'getVertexAttribOffset': 2, 'hint': 2, 'pixelStorei': 2, 'polygonOffset': 2, 'sampleCoverage': 2, 'shaderSource': 2, 'stencilMaskSeparate': 2, 'uniform1f': 2, 'uniform1fv': 2, 'uniform1i': 2, 'uniform1iv': 2, 'uniform2fv': 2, 'uniform2iv': 2, 'uniform3fv': 2, 'uniform3iv': 2, 'uniform4fv': 2, 'uniform4iv': 2, 'vertexAttrib1f': 2, 'vertexAttrib1fv': 2, 'vertexAttrib2fv': 2, 'vertexAttrib3fv': 2, 'vertexAttrib4fv': 2, 'vertexAttribDivisor': 2, 'beginQuery': 2, 'invalidateFramebuffer': 2, 'getFragDataLocation': 2, 'uniform1ui': 2, 'uniform1uiv': 2, 'uniform2uiv': 2, 'uniform3uiv': 2, 'uniform4uiv': 2, 'vertexAttribI4iv': 2, 'vertexAttribI4uiv': 2, 'getQuery': 2, 'getQueryParameter': 2, 'bindSampler': 2, 'getSamplerParameter': 2, 'fenceSync': 2, 'getSyncParameter': 2, 'bindTransformFeedback': 2, 'getTransformFeedbackVarying': 2, 'getIndexedParameter': 2, 'getUniformIndices': 2, 'getUniformBlockIndex': 2, 'getActiveUniformBlockName': 2,
-      'bindAttribLocation': 3, 'bufferData': 3, 'bufferSubData': 3, 'drawArrays': 3, 'getFramebufferAttachmentParameter': 3, 'stencilFunc': 3, 'stencilOp': 3, 'texParameterf': 3, 'texParameteri': 3, 'uniform2f': 3, 'uniform2i': 3, 'uniformMatrix2fv': 3, 'uniformMatrix3fv': 3, 'uniformMatrix4fv': 3, 'vertexAttrib2f': 3, 'getBufferSubData': 3, 'getInternalformatParameter': 3, 'uniform2ui': 3, 'uniformMatrix2x3fv': 3, 'uniformMatrix3x2fv': 3, 'uniformMatrix2x4fv': 3, 'uniformMatrix4x2fv': 3, 'uniformMatrix3x4fv': 3, 'uniformMatrix4x3fv': 3, 'clearBufferiv': 3, 'clearBufferuiv': 3, 'clearBufferfv': 3, 'samplerParameteri': 3, 'samplerParameterf': 3, 'clientWaitSync': 3, 'waitSync': 3, 'transformFeedbackVaryings': 3, 'bindBufferBase': 3, 'getActiveUniforms': 3, 'getActiveUniformBlockParameter': 3, 'uniformBlockBinding': 3,
-      'blendColor': 4, 'blendFuncSeparate': 4, 'clearColor': 4, 'colorMask': 4, 'drawElements': 4, 'framebufferRenderbuffer': 4, 'renderbufferStorage': 4, 'scissor': 4, 'stencilFuncSeparate': 4, 'stencilOpSeparate': 4, 'uniform3f': 4, 'uniform3i': 4, 'vertexAttrib3f': 4, 'viewport': 4, 'drawArraysInstanced': 4, 'uniform3ui': 4, 'clearBufferfi': 4,
-      'framebufferTexture2D': 5, 'uniform4f': 5, 'uniform4i': 5, 'vertexAttrib4f': 5, 'drawElementsInstanced': 5, 'copyBufferSubData': 5, 'framebufferTextureLayer': 5, 'renderbufferStorageMultisample': 5, 'texStorage2D': 5, 'uniform4ui': 5, 'vertexAttribI4i': 5, 'vertexAttribI4ui': 5, 'vertexAttribIPointer': 5, 'bindBufferRange': 5,
-      'texImage2D': 6, 'vertexAttribPointer': 6, 'invalidateSubFramebuffer': 6, 'texStorage3D': 6, 'drawRangeElements': 6,
-      'compressedTexImage2D': 7, 'readPixels': 7, 'texSubImage2D': 7,
-      'compressedTexSubImage2D': 8, 'copyTexImage2D': 8, 'copyTexSubImage2D': 8, 'compressedTexImage3D': 8,
-      'copyTexSubImage3D': 9,
-      'blitFramebuffer': 10, 'texImage3D': 10, 'compressedTexSubImage3D': 10,
-      'texSubImage3D': 11 },
-
     hookWebGLFunction: function(f, glCtx) {
       var realf = 'real_' + f;
       glCtx[realf] = glCtx[f];
-      var numArgs = GL.webGLFunctionLengths[f]; // On Firefox & Chrome, could do "glCtx[realf].length", but that doesn't work on Edge, which always reports 0.
-      if (numArgs === undefined) throw 'Unexpected WebGL function ' + f;
+      var numArgs = glCtx[realf].length;
+      if (numArgs === undefined) console.warn('Unexpected WebGL function ' + f + ' when binding TRACE_WEBGL_CALLS');
       var contextHandle = glCtx.canvas.GLctxObject.handle;
       var threadId = (typeof _pthread_self !== 'undefined') ? _pthread_self : function() { return 1; };
       // Accessing 'arguments' is super slow, so to avoid overhead, statically reason the number of arguments.
-      switch(numArgs) {
+      switch (numArgs) {
         case 0: glCtx[f] = function webgl_0() { var ret = glCtx[realf](); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '() -> ' + ret); return ret; }; break;
         case 1: glCtx[f] = function webgl_1(a1) { var ret = glCtx[realf](a1); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '('+a1+') -> ' + ret); return ret; }; break;
         case 2: glCtx[f] = function webgl_2(a1, a2) { var ret = glCtx[realf](a1, a2); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '('+a1+', ' + a2 +') -> ' + ret); return ret; }; break;
@@ -531,7 +536,7 @@ var LibraryGL = {
         case 9: glCtx[f] = function webgl_9(a1, a2, a3, a4, a5, a6, a7, a8, a9) { var ret = glCtx[realf](a1, a2, a3, a4, a5, a6, a7, a8, a9); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '('+a1+', ' + a2 +', ' + a3 +', ' + a4 +', ' + a5 +', ' + a6 +', ' + a7 +', ' + a8 +', ' + a9 +') -> ' + ret); return ret; }; break;
         case 10: glCtx[f] = function webgl_10(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10) { var ret = glCtx[realf](a1, a2, a3, a4, a5, a6, a7, a8, a9, a10); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '('+a1+', ' + a2 +', ' + a3 +', ' + a4 +', ' + a5 +', ' + a6 +', ' + a7 +', ' + a8 +', ' + a9 +', ' + a10 +') -> ' + ret); return ret; }; break;
         case 11: glCtx[f] = function webgl_11(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11) { var ret = glCtx[realf](a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11); console.error('[Thread ' + threadId() + ', GL ctx: ' + contextHandle + ']: ' + f + '('+a1+', ' + a2 +', ' + a3 +', ' + a4 +', ' + a5 +', ' + a6 +', ' + a7 +', ' + a8 +', ' + a9 +', ' + a10 +', ' + a11 +') -> ' + ret); return ret; }; break;
-        default: throw 'hookWebGL failed! Unexpected length ' + glCtx[realf].length;
+        default: console.warn('hookWebGL failed! Unexpected length ' + glCtx[realf].length);
       }
     },
 
@@ -548,7 +553,7 @@ var LibraryGL = {
 
       // Hot GL functions are ones that you'd expect to find during render loops (render calls, dynamic resource uploads), cold GL functions are load time functions (shader compilation, texture/mesh creation)
       // Distinguishing between these two allows pinpointing locations of troublesome GL usage that might cause performance issues.
-      for(var f in glCtx) {
+      for (var f in glCtx) {
         if (typeof glCtx[f] !== 'function' || f.indexOf('real_') == 0) continue;
         this.hookWebGLFunction(f, glCtx);
       }
@@ -577,6 +582,21 @@ var LibraryGL = {
 
 #if GL_TESTING
       webGLContextAttributes['preserveDrawingBuffer'] = true;
+#endif
+
+#if MIN_SAFARI_VERSION != TARGET_NOT_SUPPORTED && GL_WORKAROUND_SAFARI_GETCONTEXT_BUG
+      // BUG: Workaround Safari WebGL issue: After successfully acquiring WebGL context on a canvas,
+      // calling .getContext() will always return that context independent of which 'webgl' or 'webgl2'
+      // context version was passed. See https://bugs.webkit.org/show_bug.cgi?id=222758 and
+      // https://github.com/emscripten-core/emscripten/issues/13295.
+      // TODO: Once the bug is fixed and shipped in Safari, adjust the Safari version field in above check.
+      if (!canvas.getContextSafariWebGL2Fixed) {
+        canvas.getContextSafariWebGL2Fixed = canvas.getContext;
+        canvas.getContext = function(ver, attrs) {
+          var gl = canvas.getContextSafariWebGL2Fixed(ver, attrs);
+          return ((ver == 'webgl') == (gl instanceof WebGLRenderingContext)) ? gl : null;
+        }
+      }
 #endif
 
 #if MAX_WEBGL_VERSION >= 2 && MIN_CHROME_VERSION <= 57
@@ -613,6 +633,9 @@ var LibraryGL = {
       } else {
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+      var ctx = canvas.getContext("webgl2", webGLContextAttributes);
+#else
       var ctx = 
 #if MAX_WEBGL_VERSION >= 2
         (webGLContextAttributes.majorVersion > 1)
@@ -630,6 +653,7 @@ var LibraryGL = {
           || canvas.getContext("experimental-webgl", webGLContextAttributes)
 #endif
           );
+#endif // MAX_WEBGL_VERSION >= 2
 
 #if GL_PREINITIALIZED_CONTEXT
       }
@@ -1064,103 +1088,23 @@ var LibraryGL = {
 #if MAX_WEBGL_VERSION >= 2
       // Extensions that are available from WebGL >= 2 (no-op if called on a WebGL 1 context active)
       __webgl_enable_WEBGL_draw_instanced_base_vertex_base_instance(GLctx);
+      __webgl_enable_WEBGL_multi_draw_instanced_base_vertex_base_instance(GLctx);
 #endif
 
       GLctx.disjointTimerQueryExt = GLctx.getExtension("EXT_disjoint_timer_query");
+      __webgl_enable_WEBGL_multi_draw(GLctx);
 
-      // These are the 'safe' feature-enabling extensions that don't add any performance impact related to e.g. debugging, and
-      // should be enabled by default so that client GLES2/GL code will not need to go through extra hoops to get its stuff working.
-      // As new extensions are ratified at http://www.khronos.org/registry/webgl/extensions/ , feel free to add your new extensions
-      // here, as long as they don't produce a performance impact for users that might not be using those extensions.
-      // E.g. debugging-related extensions should probably be off by default.
-      var automaticallyEnabledExtensions = [ // Khronos ratified WebGL extensions ordered by number (no debug extensions):
-                                             "OES_texture_float", "OES_texture_half_float", "OES_standard_derivatives",
-                                             "OES_vertex_array_object", "WEBGL_compressed_texture_s3tc", "WEBGL_depth_texture",
-                                             "OES_element_index_uint", "EXT_texture_filter_anisotropic", "EXT_frag_depth",
-                                             "WEBGL_draw_buffers", "ANGLE_instanced_arrays", "OES_texture_float_linear",
-                                             "OES_texture_half_float_linear", "EXT_blend_minmax", "EXT_shader_texture_lod",
-                                             "EXT_texture_norm16",
-                                             // Community approved WebGL extensions ordered by number:
-                                             "WEBGL_compressed_texture_pvrtc", "EXT_color_buffer_half_float", "WEBGL_color_buffer_float",
-                                             "EXT_sRGB", "WEBGL_compressed_texture_etc1", "EXT_disjoint_timer_query",
-                                             "WEBGL_compressed_texture_etc", "WEBGL_compressed_texture_astc", "EXT_color_buffer_float",
-                                             "WEBGL_compressed_texture_s3tc_srgb", "EXT_disjoint_timer_query_webgl2",
-                                             // Old style prefixed forms of extensions (but still currently used on e.g. iPhone Xs as
-                                             // tested on iOS 12.4.1):
-                                             "WEBKIT_WEBGL_compressed_texture_pvrtc"];
-
-      function shouldEnableAutomatically(extension) {
-        var ret = false;
-        automaticallyEnabledExtensions.forEach(function(include) {
-          if (extension.indexOf(include) != -1) {
-            ret = true;
-          }
-        });
-        return ret;
-      }
-
-      var exts = GLctx.getSupportedExtensions() || []; // .getSupportedExtensions() can return null if context is lost, so coerce to empty array.
+      // .getSupportedExtensions() can return null if context is lost, so coerce to empty array.
+      var exts = GLctx.getSupportedExtensions() || [];
       exts.forEach(function(ext) {
-        if (automaticallyEnabledExtensions.indexOf(ext) != -1) {
-          GLctx.getExtension(ext); // Calling .getExtension enables that extension permanently, no need to store the return value to be enabled.
+        // WEBGL_lose_context, WEBGL_debug_renderer_info and WEBGL_debug_shaders are not enabled by default.
+        if (ext.indexOf('lose_context') < 0 && ext.indexOf('debug') < 0) {
+          // Call .getExtension() to enable that extension permanently.
+          GLctx.getExtension(ext);
         }
       });
     },
 #endif
-    // In WebGL, uniforms in a shader program are accessed through an opaque object type 'WebGLUniformLocation'.
-    // In GLES2, uniforms are accessed via indices. Therefore we must generate a mapping of indices -> WebGLUniformLocations
-    // to provide the client code the API that uses indices.
-    // This function takes a linked GL program and generates a mapping table for the program.
-    // NOTE: Populating the uniform table is performed eagerly at glLinkProgram time, so glLinkProgram should be considered
-    //       to be a slow/costly function call. Calling glGetUniformLocation is relatively fast, since it is always a read-only
-    //       lookup to the table populated in this function call.
-    populateUniformTable: function(program) {
-#if GL_ASSERTIONS
-      GL.validateGLObjectID(GL.programs, program, 'populateUniformTable', 'program');
-#endif
-      var p = GL.programs[program];
-      var ptable = GL.programInfos[program] = {
-        uniforms: {},
-        maxUniformLength: 0, // This is eagerly computed below, since we already enumerate all uniforms anyway.
-        maxAttributeLength: -1, // This is lazily computed and cached, computed when/if first asked, "-1" meaning not computed yet.
-        maxUniformBlockNameLength: -1 // Lazily computed as well
-      };
-
-      var utable = ptable.uniforms;
-      // A program's uniform table maps the string name of an uniform to an integer location of that uniform.
-      // The global GL.uniforms map maps integer locations to WebGLUniformLocations.
-      var numUniforms = GLctx.getProgramParameter(p, 0x8B86/*GL_ACTIVE_UNIFORMS*/);
-      for (var i = 0; i < numUniforms; ++i) {
-        var u = GLctx.getActiveUniform(p, i);
-
-        var name = u.name;
-        ptable.maxUniformLength = Math.max(ptable.maxUniformLength, name.length+1);
-
-        // If we are dealing with an array, e.g. vec4 foo[3], strip off the array index part to canonicalize that "foo", "foo[]",
-        // and "foo[0]" will mean the same. Loop below will populate foo[1] and foo[2].
-        if (name.slice(-1) == ']') {
-          name = name.slice(0, name.lastIndexOf('['));
-        }
-
-        // Optimize memory usage slightly: If we have an array of uniforms, e.g. 'vec3 colors[3];', then
-        // only store the string 'colors' in utable, and 'colors[0]', 'colors[1]' and 'colors[2]' will be parsed as 'colors'+i.
-        // Note that for the GL.uniforms table, we still need to fetch the all WebGLUniformLocations for all the indices.
-        var loc = GLctx.getUniformLocation(p, name);
-        if (loc) {
-          var id = GL.getNewId(GL.uniforms);
-          utable[name] = [u.size, id];
-          GL.uniforms[id] = loc;
-
-          for (var j = 1; j < u.size; ++j) {
-            var n = name + '['+j+']';
-            loc = GLctx.getUniformLocation(p, n);
-            id = GL.getNewId(GL.uniforms);
-
-            GL.uniforms[id] = loc;
-          }
-        }
-      }
-    }
   },
 
   glPixelStorei__sig: 'vii',
@@ -1174,67 +1118,72 @@ var LibraryGL = {
   glGetString__sig: 'ii',
   glGetString__deps: ['$stringToNewUTF8'],
   glGetString: function(name_) {
-    if (GL.stringCache[name_]) return GL.stringCache[name_];
-    var ret;
-    switch(name_) {
-      case 0x1F03 /* GL_EXTENSIONS */:
-        var exts = GLctx.getSupportedExtensions() || []; // .getSupportedExtensions() can return null if context is lost, so coerce to empty array.
+    var ret = GL.stringCache[name_];
+    if (!ret) {
+      switch (name_) {
+        case 0x1F03 /* GL_EXTENSIONS */:
+          var exts = GLctx.getSupportedExtensions() || []; // .getSupportedExtensions() can return null if context is lost, so coerce to empty array.
 #if GL_EXTENSIONS_IN_PREFIXED_FORMAT
-        exts = exts.concat(exts.map(function(e) { return "GL_" + e; }));
+          exts = exts.concat(exts.map(function(e) { return "GL_" + e; }));
 #endif
-        ret = stringToNewUTF8(exts.join(' '));
-        break;
-      case 0x1F00 /* GL_VENDOR */:
-      case 0x1F01 /* GL_RENDERER */:
-      case 0x9245 /* UNMASKED_VENDOR_WEBGL */:
-      case 0x9246 /* UNMASKED_RENDERER_WEBGL */:
+          ret = stringToNewUTF8(exts.join(' '));
+          break;
+        case 0x1F00 /* GL_VENDOR */:
+        case 0x1F01 /* GL_RENDERER */:
+        case 0x9245 /* UNMASKED_VENDOR_WEBGL */:
+        case 0x9246 /* UNMASKED_RENDERER_WEBGL */:
 #if !GL_EMULATE_GLES_VERSION_STRING_FORMAT
-      case 0x1F02 /* GL_VERSION */:
-      case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
+        case 0x1F02 /* GL_VERSION */:
+        case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
 #endif
-        var s = GLctx.getParameter(name_);
-        if (!s) {
-          GL.recordError(0x500/*GL_INVALID_ENUM*/);
+          var s = GLctx.getParameter(name_);
+#if GL_TRACK_ERRORS
+          if (!s) {
+            GL.recordError(0x500/*GL_INVALID_ENUM*/);
 #if GL_ASSERTIONS
-          err('GL_INVALID_ENUM in glGetString: Received empty parameter for query name ' + name_ + '!'); // This occurs e.g. if one attempts GL_UNMASKED_VENDOR_WEBGL when it is not supported.
+            err('GL_INVALID_ENUM in glGetString: Received empty parameter for query name ' + name_ + '!'); // This occurs e.g. if one attempts GL_UNMASKED_VENDOR_WEBGL when it is not supported.
 #endif
-        }
-        ret = stringToNewUTF8(s);
-        break;
+          }
+#endif
+          ret = s && stringToNewUTF8(s);
+          break;
 
 #if GL_EMULATE_GLES_VERSION_STRING_FORMAT
-      case 0x1F02 /* GL_VERSION */:
-        var glVersion = GLctx.getParameter(0x1F02 /*GL_VERSION*/);
-        // return GLES version string corresponding to the version of the WebGL context
+        case 0x1F02 /* GL_VERSION */:
+          var glVersion = GLctx.getParameter(0x1F02 /*GL_VERSION*/);
+          // return GLES version string corresponding to the version of the WebGL context
 #if MAX_WEBGL_VERSION >= 2
-        if (GL.currentContext.version >= 2) glVersion = 'OpenGL ES 3.0 (' + glVersion + ')';
-        else
+          if ({{{ isCurrentContextWebGL2() }}}) glVersion = 'OpenGL ES 3.0 (' + glVersion + ')';
+          else
 #endif
-        {
-          glVersion = 'OpenGL ES 2.0 (' + glVersion + ')';
-        }
-        ret = stringToNewUTF8(glVersion);
-        break;
-      case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
-        var glslVersion = GLctx.getParameter(0x8B8C /*GL_SHADING_LANGUAGE_VERSION*/);
-        // extract the version number 'N.M' from the string 'WebGL GLSL ES N.M ...'
-        var ver_re = /^WebGL GLSL ES ([0-9]\.[0-9][0-9]?)(?:$| .*)/;
-        var ver_num = glslVersion.match(ver_re);
-        if (ver_num !== null) {
-          if (ver_num[1].length == 3) ver_num[1] = ver_num[1] + '0'; // ensure minor version has 2 digits
-          glslVersion = 'OpenGL ES GLSL ES ' + ver_num[1] + ' (' + glslVersion + ')';
-        }
-        ret = stringToNewUTF8(glslVersion);
-        break;
+          {
+            glVersion = 'OpenGL ES 2.0 (' + glVersion + ')';
+          }
+          ret = stringToNewUTF8(glVersion);
+          break;
+        case 0x8B8C /* GL_SHADING_LANGUAGE_VERSION */:
+          var glslVersion = GLctx.getParameter(0x8B8C /*GL_SHADING_LANGUAGE_VERSION*/);
+          // extract the version number 'N.M' from the string 'WebGL GLSL ES N.M ...'
+          var ver_re = /^WebGL GLSL ES ([0-9]\.[0-9][0-9]?)(?:$| .*)/;
+          var ver_num = glslVersion.match(ver_re);
+          if (ver_num !== null) {
+            if (ver_num[1].length == 3) ver_num[1] = ver_num[1] + '0'; // ensure minor version has 2 digits
+            glslVersion = 'OpenGL ES GLSL ES ' + ver_num[1] + ' (' + glslVersion + ')';
+          }
+          ret = stringToNewUTF8(glslVersion);
+          break;
 #endif
-      default:
-        GL.recordError(0x500/*GL_INVALID_ENUM*/);
+#if GL_TRACK_ERRORS
+        default:
+          GL.recordError(0x500/*GL_INVALID_ENUM*/);
 #if GL_ASSERTIONS
-        err('GL_INVALID_ENUM in glGetString: Unknown parameter ' + name_ + '!');
+          err('GL_INVALID_ENUM in glGetString: Unknown parameter ' + name_ + '!');
 #endif
-        return 0;
+#endif
+          // fall through
+      }
+      GL.stringCache[name_] = ret;
     }
-    GL.stringCache[name_] = ret;
     return ret;
   },
 
@@ -1252,7 +1201,7 @@ var LibraryGL = {
       return;
     }
     var ret = undefined;
-    switch(name_) { // Handle a few trivial GLES values
+    switch (name_) { // Handle a few trivial GLES values
       case 0x8DFA: // GL_SHADER_COMPILER
         ret = 1;
         break;
@@ -1278,6 +1227,15 @@ var LibraryGL = {
         var formats = GLctx.getParameter(0x86A3 /*GL_COMPRESSED_TEXTURE_FORMATS*/);
         ret = formats ? formats.length : 0;
         break;
+#if GL_EXPLICIT_UNIFORM_LOCATION
+      case 0x826E: // GL_MAX_UNIFORM_LOCATIONS
+        // This is an arbitrary limit, must be large enough to allow practical
+        // use, but small enough to still keep a range for automatic uniform
+        // locations, which get assigned numbers larger than this.
+        ret = 1048576;
+        break;
+#endif
+
 #if MAX_WEBGL_VERSION >= 2
       case 0x821D: // GL_NUM_EXTENSIONS
 #if GL_TRACK_ERRORS
@@ -1304,7 +1262,7 @@ var LibraryGL = {
 #endif
         ret = name_ == 0x821B ? 3 : 0; // return version 3.0
         break;
-#endif
+#endif // ~MAX_WEBGL_VERSION >= 2
     }
 
     if (ret === undefined) {
@@ -1326,7 +1284,7 @@ var LibraryGL = {
           if (result === null) {
             // null is a valid result for some (e.g., which buffer is bound - perhaps nothing is bound), but otherwise
             // can mean an invalid name_, which we need to report as an error
-            switch(name_) {
+            switch (name_) {
               case 0x8894: // ARRAY_BUFFER_BINDING
               case 0x8B8D: // CURRENT_PROGRAM
               case 0x8895: // ELEMENT_ARRAY_BUFFER_BINDING
@@ -1441,7 +1399,7 @@ var LibraryGL = {
   glCompressedTexImage2D__sig: 'viiiiiiii',
   glCompressedTexImage2D: function(target, level, internalFormat, width, height, border, imageSize, data) {
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (GLctx.currentPixelUnpackBufferBinding) {
         GLctx['compressedTexImage2D'](target, level, internalFormat, width, height, border, imageSize, data);
       } else {
@@ -1457,7 +1415,7 @@ var LibraryGL = {
   glCompressedTexSubImage2D__sig: 'viiiiiiiii',
   glCompressedTexSubImage2D: function(target, level, xoffset, yoffset, width, height, format, imageSize, data) {
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (GLctx.currentPixelUnpackBufferBinding) {
         GLctx['compressedTexSubImage2D'](target, level, xoffset, yoffset, width, height, format, imageSize, data);
       } else {
@@ -1469,7 +1427,7 @@ var LibraryGL = {
     GLctx['compressedTexSubImage2D'](target, level, xoffset, yoffset, width, height, format, data ? {{{ makeHEAPView('U8', 'data', 'data+imageSize') }}} : null);
   },
 
-  _computeUnpackAlignedImageSize: function(width, height, sizePerPixel, alignment) {
+  $computeUnpackAlignedImageSize: function(width, height, sizePerPixel, alignment) {
     function roundedToNextMultipleOf(x, y) {
 #if GL_ASSERTIONS
       assert((y & (y-1)) === 0, 'Unpack alignment must be a power of 2! (Allowed values per WebGL spec are 1, 2, 4 or 8)');
@@ -1515,13 +1473,13 @@ var LibraryGL = {
     return colorChannels[format - 0x1902]||1;
   },
 
-  $emscriptenWebGLGetTexPixelData__deps: ['_computeUnpackAlignedImageSize', '_colorChannelsInGlTextureFormat', '_heapObjectForWebGLType', '_heapAccessShiftForWebGLHeap'],
+  $emscriptenWebGLGetTexPixelData__deps: ['$computeUnpackAlignedImageSize', '_colorChannelsInGlTextureFormat', '$heapObjectForWebGLType', '$heapAccessShiftForWebGLHeap'],
   $emscriptenWebGLGetTexPixelData: function(type, format, width, height, pixels, internalFormat) {
-    var heap = __heapObjectForWebGLType(type);
-    var shift = __heapAccessShiftForWebGLHeap(heap);
+    var heap = heapObjectForWebGLType(type);
+    var shift = heapAccessShiftForWebGLHeap(heap);
     var byteSize = 1<<shift;
     var sizePerPixel = __colorChannelsInGlTextureFormat(format) * byteSize;
-    var bytes = __computeUnpackAlignedImageSize(width, height, sizePerPixel, GL.unpackAlignment);
+    var bytes = computeUnpackAlignedImageSize(width, height, sizePerPixel, GL.unpackAlignment);
 #if GL_ASSERTIONS
     assert((pixels >> shift) << shift == pixels, 'Pointer to texture data passed to texture get function must be aligned to the byte size of the pixel type!');
 #endif
@@ -1531,13 +1489,13 @@ var LibraryGL = {
   glTexImage2D__sig: 'viiiiiiiii',
   glTexImage2D__deps: ['$emscriptenWebGLGetTexPixelData'
 #if MAX_WEBGL_VERSION >= 2
-                       , '_heapObjectForWebGLType', '_heapAccessShiftForWebGLHeap'
+                       , '$heapObjectForWebGLType', '$heapAccessShiftForWebGLHeap'
 #endif
   ],
   glTexImage2D: function(target, level, internalFormat, width, height, border, format, type, pixels) {
 #if MAX_WEBGL_VERSION >= 2
 #if WEBGL2_BACKWARDS_COMPATIBILITY_EMULATION
-    if (GL.currentContext.version >= 2) {
+    if ({{{ isCurrentContextWebGL2() }}}) {
       // WebGL 1 unsized texture internalFormats are no longer supported in WebGL 2, so patch those format
       // enums to the ones that are present in WebGL 2.
       if (format == 0x1902/*GL_DEPTH_COMPONENT*/ && internalFormat == 0x1902/*GL_DEPTH_COMPONENT*/ && type == 0x1405/*GL_UNSIGNED_INT*/) {
@@ -1554,13 +1512,13 @@ var LibraryGL = {
       }
     }
 #endif
-    if (GL.currentContext.version >= 2) {
+    if ({{{ isCurrentContextWebGL2() }}}) {
       // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (GLctx.currentPixelUnpackBufferBinding) {
         GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, pixels);
       } else if (pixels) {
-        var heap = __heapObjectForWebGLType(type);
-        GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, heap, pixels >> __heapAccessShiftForWebGLHeap(heap));
+        var heap = heapObjectForWebGLType(type);
+        GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, heap, pixels >> heapAccessShiftForWebGLHeap(heap));
       } else {
         GLctx.texImage2D(target, level, internalFormat, width, height, border, format, type, null);
       }
@@ -1573,26 +1531,26 @@ var LibraryGL = {
   glTexSubImage2D__sig: 'viiiiiiiii',
   glTexSubImage2D__deps: ['$emscriptenWebGLGetTexPixelData'
 #if MAX_WEBGL_VERSION >= 2
-                          , '_heapObjectForWebGLType', '_heapAccessShiftForWebGLHeap'
+                          , '$heapObjectForWebGLType', '$heapAccessShiftForWebGLHeap'
 #endif
   ],
   glTexSubImage2D: function(target, level, xoffset, yoffset, width, height, format, type, pixels) {
 #if MAX_WEBGL_VERSION >= 2
 #if WEBGL2_BACKWARDS_COMPATIBILITY_EMULATION
-    if (GL.currentContext.version >= 2) {
+    if ({{{ isCurrentContextWebGL2() }}}) {
       // In WebGL 1 to do half float textures, one uses the type enum GL_HALF_FLOAT_OES, but in
       // WebGL 2 when half float textures were adopted to the core spec, the enum changed value
       // which breaks backwards compatibility. Route old enum number to the new one.
       if (type == 0x8d61/*GL_HALF_FLOAT_OES*/) type = 0x140B /*GL_HALF_FLOAT*/;
     }
 #endif
-    if (GL.currentContext.version >= 2) {
+    if ({{{ isCurrentContextWebGL2() }}}) {
       // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (GLctx.currentPixelUnpackBufferBinding) {
         GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, pixels);
       } else if (pixels) {
-        var heap = __heapObjectForWebGLType(type);
-        GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, heap, pixels >> __heapAccessShiftForWebGLHeap(heap));
+        var heap = heapObjectForWebGLType(type);
+        GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, heap, pixels >> heapAccessShiftForWebGLHeap(heap));
       } else {
         GLctx.texSubImage2D(target, level, xoffset, yoffset, width, height, format, type, null);
       }
@@ -1607,17 +1565,17 @@ var LibraryGL = {
   glReadPixels__sig: 'viiiiiii',
   glReadPixels__deps: ['$emscriptenWebGLGetTexPixelData'
 #if MAX_WEBGL_VERSION >= 2
-                       , '_heapObjectForWebGLType', '_heapAccessShiftForWebGLHeap'
+                       , '$heapObjectForWebGLType', '$heapAccessShiftForWebGLHeap'
 #endif
   ],
   glReadPixels: function(x, y, width, height, format, type, pixels) {
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (GLctx.currentPixelPackBufferBinding) {
         GLctx.readPixels(x, y, width, height, format, type, pixels);
       } else {
-        var heap = __heapObjectForWebGLType(type);
-        GLctx.readPixels(x, y, width, height, format, type, heap, pixels >> __heapAccessShiftForWebGLHeap(heap));
+        var heap = heapObjectForWebGLType(type);
+        GLctx.readPixels(x, y, width, height, format, type, heap, pixels >> heapAccessShiftForWebGLHeap(heap));
       }
       return;
     }
@@ -1748,8 +1706,10 @@ var LibraryGL = {
       buffer.name = 0;
       GL.buffers[id] = null;
 
-      if (id == GL.currArrayBuffer) GL.currArrayBuffer = 0;
-      if (id == GL.currElementArrayBuffer) GL.currElementArrayBuffer = 0;
+#if FULL_ES2 || LEGACY_GL_EMULATION
+      if (id == GLctx.currentArrayBufferBinding) GLctx.currentArrayBufferBinding = 0;
+      if (id == GLctx.currentElementArrayBufferBinding) GLctx.currentElementArrayBufferBinding = 0;
+#endif
 #if MAX_WEBGL_VERSION >= 2
       if (id == GLctx.currentPixelPackBufferBinding) GLctx.currentPixelPackBufferBinding = 0;
       if (id == GLctx.currentPixelUnpackBufferBinding) GLctx.currentPixelUnpackBufferBinding = 0;
@@ -1789,8 +1749,9 @@ var LibraryGL = {
         break;
     }
 #endif
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       if (data) {
         GLctx.bufferData(target, HEAPU8, usage, data, size);
       } else {
@@ -1809,7 +1770,7 @@ var LibraryGL = {
   glBufferSubData__sig: 'viiii',
   glBufferSubData: function(target, offset, size, data) {
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
       GLctx.bufferSubData(target, offset, HEAPU8, data, size);
       return;
     }
@@ -1827,7 +1788,7 @@ var LibraryGL = {
 #if GL_ASSERTIONS
         err('GL_INVALID_OPERATION in glGenQueriesEXT: GLctx.disjointTimerQueryExt.createQueryEXT returned null - most likely GL context is lost!');
 #endif
-        while(i < n) {{{ makeSetValue('ids', 'i++*4', 0, 'i32') }}};
+        while (i < n) {{{ makeSetValue('ids', 'i++*4', 0, 'i32') }}};
         return;
       }
       var id = GL.getNewId(GL.timerQueriesEXT);
@@ -2014,21 +1975,26 @@ var LibraryGL = {
     }
 #if GL_ASSERTIONS
     GL.validateGLObjectID(GL.programs, program, 'glGetUniform*v', 'program');
-    GL.validateGLObjectID(GL.uniforms, location, 'glGetUniform*v', 'location');
+    GL.validateGLObjectID(program.uniformLocsById, location, 'glGetUniform*v', 'location');
 #endif
-    var data = GLctx.getUniform(GL.programs[program], GL.uniforms[location]);
+    program = GL.programs[program];
+    var data = GLctx.getUniform(program, program.uniformLocsById[location]);
     if (typeof data == 'number' || typeof data == 'boolean') {
       switch (type) {
         case {{{ cDefine('EM_FUNC_SIG_PARAM_I') }}}: {{{ makeSetValue('params', '0', 'data', 'i32') }}}; break;
         case {{{ cDefine('EM_FUNC_SIG_PARAM_F') }}}: {{{ makeSetValue('params', '0', 'data', 'float') }}}; break;
+#if GL_ASSERTIONS
         default: throw 'internal emscriptenWebGLGetUniform() error, bad type: ' + type;
+#endif
       }
     } else {
       for (var i = 0; i < data.length; i++) {
         switch (type) {
           case {{{ cDefine('EM_FUNC_SIG_PARAM_I') }}}: {{{ makeSetValue('params', 'i*4', 'data[i]', 'i32') }}}; break;
           case {{{ cDefine('EM_FUNC_SIG_PARAM_F') }}}: {{{ makeSetValue('params', 'i*4', 'data[i]', 'float') }}}; break;
+#if GL_ASSERTIONS
           default: throw 'internal emscriptenWebGLGetUniform() error, bad type: ' + type;
+#endif
         }
       }
     }
@@ -2046,28 +2012,118 @@ var LibraryGL = {
     emscriptenWebGLGetUniform(program, location, params, {{{ cDefine('EM_FUNC_SIG_PARAM_I') }}});
   },
 
+  // Returns the WebGLUniformLocation object corresponding to the location index integer on
+  // the currently active shader in this GL context.
+  $webglGetUniformLocation: function(location) {
+    var p = GLctx.currentProgram;
+    var webglLoc = p.uniformLocsById[location];
+    // p.uniformLocsById[location] stores either an integer, or a WebGLUniformLocation.
+
+    // If an integer, we have not yet bound the location, so do it now. The integer value specifies the array index
+    // we should bind to.
+    if (webglLoc >= 0) {
+      p.uniformLocsById[location] = webglLoc = GLctx.getUniformLocation(p, p.uniformArrayNamesById[location] + (webglLoc > 0 ? '[' + webglLoc + ']' : ''));
+    }
+    // Else an already cached WebGLUniformLocation, return it.
+    return webglLoc;
+  },
+
   glGetUniformLocation__sig: 'iii',
   glGetUniformLocation__deps: ['$jstoi_q'],
   glGetUniformLocation: function(program, name) {
+    // Returns the index of '[' character in an uniform that represents an array of uniforms (e.g. colors[10])
+    // Closure does counterproductive inlining: https://github.com/google/closure-compiler/issues/3203, so prevent
+    // inlining manually.
+    /** @noinline */
+    function getLeftBracePos(name) {
+      return name.slice(-1) == ']' && name.lastIndexOf('[');
+    }
+
 #if GL_ASSERTIONS
     GL.validateGLObjectID(GL.programs, program, 'glGetUniformLocation', 'program');
 #endif
     name = UTF8ToString(name);
 
+#if GL_ASSERTIONS
+    assert(name.indexOf(' ') == -1, 'Uniform names passed to glGetUniformLocation() should not contain spaces! (received "' + name + '")');
+#endif
+
+    program = GL.programs[program];
+    var uniformLocsById = program.uniformLocsById; // Maps GLuint -> WebGLUniformLocation
+    var uniformSizeAndIdsByName = program.uniformSizeAndIdsByName; // Maps name -> [uniform array length, GLuint]
+    var i, j;
     var arrayIndex = 0;
-    // If user passed an array accessor "[index]", parse the array index off the accessor.
-    if (name[name.length - 1] == ']') {
-      var leftBrace = name.lastIndexOf('[');
-      arrayIndex = name[leftBrace+1] != ']' ? jstoi_q(name.slice(leftBrace + 1)) : 0; // "index]", parseInt will ignore the ']' at the end; but treat "foo[]" as "foo[0]"
-      name = name.slice(0, leftBrace);
+    var uniformBaseName = name;
+
+    // Invariant: when populating integer IDs for uniform locations, we must maintain the precondition that
+    // arrays reside in contiguous addresses, i.e. for a 'vec4 colors[10];', colors[4] must be at location colors[0]+4.
+    // However, user might call glGetUniformLocation(program, "colors") for an array, so we cannot discover based on the user
+    // input arguments whether the uniform we are dealing with is an array. The only way to discover which uniforms are arrays
+    // is to enumerate over all the active uniforms in the program.
+    var leftBrace = getLeftBracePos(name);
+
+    // On the first time invocation of glGetUniformLocation on this shader program:
+    // initialize cache data structures and discover which uniforms are arrays.
+    if (!uniformLocsById) {
+      // maps GLint integer locations to WebGLUniformLocations
+      program.uniformLocsById = uniformLocsById = {};
+      // maps integer locations back to uniform name strings, so that we can lazily fetch uniform array locations
+      program.uniformArrayNamesById = {};
+
+      for (i = 0; i < GLctx.getProgramParameter(program, 0x8B86/*GL_ACTIVE_UNIFORMS*/); ++i) {
+        var u = GLctx.getActiveUniform(program, i);
+        var nm = u.name;
+        var sz = u.size;
+        var lb = getLeftBracePos(nm);
+        var arrayName = lb > 0 ? nm.slice(0, lb) : nm;
+
+#if GL_EXPLICIT_UNIFORM_LOCATION
+        // Acquire the preset location from the explicit uniform location if one was specified, or
+        // programmatically assign a new one if not.
+        var id = uniformSizeAndIdsByName[arrayName] ? uniformSizeAndIdsByName[arrayName][1] : program.uniformIdCounter;
+        program.uniformIdCounter = Math.max(id + sz, program.uniformIdCounter);
+#else
+        // Assign a new location.
+        var id = program.uniformIdCounter;
+        program.uniformIdCounter += sz;
+#endif
+        // Eagerly get the location of the uniformArray[0] base element.
+        // The remaining indices >0 will be left for lazy evaluation to
+        // improve performance. Those may never be needed to fetch, if the
+        // application fills arrays always in full starting from the first
+        // element of the array.
+        uniformSizeAndIdsByName[arrayName] = [sz, id];
+
+        // Store placeholder integers in place that highlight that these
+        // >0 index locations are array indices pending population.
+        for(j = 0; j < sz; ++j) {
+          uniformLocsById[id] = j;
+          program.uniformArrayNamesById[id++] = arrayName;
+        }
+      }
     }
 
-    var uniformInfo = GL.programInfos[program] && GL.programInfos[program].uniforms[name]; // returns pair [ dimension_of_uniform_array, uniform_location ]
-    if (uniformInfo && arrayIndex >= 0 && arrayIndex < uniformInfo[0]) { // Check if user asked for an out-of-bounds element, i.e. for 'vec4 colors[3];' user could ask for 'colors[10]' which should return -1.
-      return uniformInfo[1] + arrayIndex;
-    } else {
-      return -1;
+    // If user passed an array accessor "[index]", parse the array index off the accessor.
+    if (leftBrace > 0) {
+#if GL_ASSERTIONS
+      assert(name.slice(leftBrace + 1).length == 1 || !isNaN(jstoi_q(name.slice(leftBrace + 1))), 'Malformed input parameter name "' + name + '" passed to glGetUniformLocation!');
+#endif
+      arrayIndex = jstoi_q(name.slice(leftBrace + 1)) >>> 0; // "index]", coerce parseInt(']') with >>>0 to treat "foo[]" as "foo[0]" and foo[-1] as unsigned out-of-bounds.
+      uniformBaseName = name.slice(0, leftBrace);
     }
+
+    // Have we cached the location of this uniform before?
+    var sizeAndId = uniformSizeAndIdsByName[uniformBaseName]; // A pair [array length, GLint of the uniform location]
+
+    // If an uniform with this name exists, and if its index is within the array limits (if it's even an array),
+    // query the WebGLlocation, or return an existing cached location.
+    if (sizeAndId && arrayIndex < sizeAndId[0]) {
+      arrayIndex += sizeAndId[1]; // Add the base location of the uniform to the array index offset.
+      if ((uniformLocsById[arrayIndex] = uniformLocsById[arrayIndex] || GLctx.getUniformLocation(program, name))) {
+        return arrayIndex;
+      }
+    }
+    return -1;
   },
 
   $emscriptenWebGLGetVertexAttrib__docs: '/** @suppress{checkTypes} */', // This function intentionally assigns `HEAP32[x] = someBoolean;` Don't let Closure mind about that.
@@ -2094,7 +2150,9 @@ var LibraryGL = {
         case {{{ cDefine('EM_FUNC_SIG_PARAM_I') }}}: {{{ makeSetValue('params', '0', 'data', 'i32') }}}; break;
         case {{{ cDefine('EM_FUNC_SIG_PARAM_F') }}}: {{{ makeSetValue('params', '0', 'data', 'float') }}}; break;
         case {{{ cDefine('EM_FUNC_SIG_PARAM_F2I') }}}: {{{ makeSetValue('params', '0', 'Math.fround(data)', 'i32') }}}; break;
+#if GL_ASSERTIONS
         default: throw 'internal emscriptenWebGLGetVertexAttrib() error, bad type: ' + type;
+#endif
       }
     } else {
       for (var i = 0; i < data.length; i++) {
@@ -2102,7 +2160,9 @@ var LibraryGL = {
           case {{{ cDefine('EM_FUNC_SIG_PARAM_I') }}}: {{{ makeSetValue('params', 'i*4', 'data[i]', 'i32') }}}; break;
           case {{{ cDefine('EM_FUNC_SIG_PARAM_F') }}}: {{{ makeSetValue('params', 'i*4', 'data[i]', 'float') }}}; break;
           case {{{ cDefine('EM_FUNC_SIG_PARAM_F2I') }}}: {{{ makeSetValue('params', 'i*4', 'Math.fround(data[i])', 'i32') }}}; break;
+#if GL_ASSERTIONS
           default: throw 'internal emscriptenWebGLGetVertexAttrib() error, bad type: ' + type;
+#endif
         }
       }
     }
@@ -2143,103 +2203,108 @@ var LibraryGL = {
     {{{ makeSetValue('pointer', '0', 'GLctx.getVertexAttribOffset(index, pname)', 'i32') }}};
   },
 
-  glGetActiveUniform__sig: 'viiiiiii',
-  glGetActiveUniform: function(program, index, bufSize, length, size, type, name) {
-#if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.programs, program, 'glGetActiveUniform', 'program');
-#endif
-    program = GL.programs[program];
-    var info = GLctx.getActiveUniform(program, index);
-    if (!info) return; // If an error occurs, nothing will be written to length, size, type and name.
-
-    var numBytesWrittenExclNull = (bufSize > 0 && name) ? stringToUTF8(info.name, name, bufSize) : 0;
-    if (length) {{{ makeSetValue('length', '0', 'numBytesWrittenExclNull', 'i32') }}};
-    if (size) {{{ makeSetValue('size', '0', 'info.size', 'i32') }}};
-    if (type) {{{ makeSetValue('type', '0', 'info.type', 'i32') }}};
-  },
-
   glUniform1f__sig: 'vif',
+  glUniform1f__deps: ['$webglGetUniformLocation'],
   glUniform1f: function(location, v0) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform1f', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform1f', 'location');
 #endif
-    GLctx.uniform1f(GL.uniforms[location], v0);
+    GLctx.uniform1f(webglGetUniformLocation(location), v0);
   },
 
   glUniform2f__sig: 'viff',
+  glUniform2f__deps: ['$webglGetUniformLocation'],
   glUniform2f: function(location, v0, v1) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform2f', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform2f', 'location');
 #endif
-    GLctx.uniform2f(GL.uniforms[location], v0, v1);
+    GLctx.uniform2f(webglGetUniformLocation(location), v0, v1);
   },
 
   glUniform3f__sig: 'vifff',
+  glUniform3f__deps: ['$webglGetUniformLocation'],
   glUniform3f: function(location, v0, v1, v2) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform3f', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform3f', 'location');
 #endif
-    GLctx.uniform3f(GL.uniforms[location], v0, v1, v2);
+    GLctx.uniform3f(webglGetUniformLocation(location), v0, v1, v2);
   },
 
   glUniform4f__sig: 'viffff',
+  glUniform4f__deps: ['$webglGetUniformLocation'],
   glUniform4f: function(location, v0, v1, v2, v3) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform4f', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform4f', 'location');
 #endif
-    GLctx.uniform4f(GL.uniforms[location], v0, v1, v2, v3);
+    GLctx.uniform4f(webglGetUniformLocation(location), v0, v1, v2, v3);
   },
 
   glUniform1i__sig: 'vii',
+  glUniform1i__deps: ['$webglGetUniformLocation'],
   glUniform1i: function(location, v0) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform1i', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform1i', 'location');
 #endif
-    GLctx.uniform1i(GL.uniforms[location], v0);
+    GLctx.uniform1i(webglGetUniformLocation(location), v0);
   },
 
   glUniform2i__sig: 'viii',
+  glUniform2i__deps: ['$webglGetUniformLocation'],
   glUniform2i: function(location, v0, v1) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform2i', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform2i', 'location');
 #endif
-    GLctx.uniform2i(GL.uniforms[location], v0, v1);
+    GLctx.uniform2i(webglGetUniformLocation(location), v0, v1);
   },
 
   glUniform3i__sig: 'viiii',
+  glUniform3i__deps: ['$webglGetUniformLocation'],
   glUniform3i: function(location, v0, v1, v2) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform3i', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform3i', 'location');
 #endif
-    GLctx.uniform3i(GL.uniforms[location], v0, v1, v2);
+    GLctx.uniform3i(webglGetUniformLocation(location), v0, v1, v2);
   },
 
   glUniform4i__sig: 'viiiii',
+  glUniform4i__deps: ['$webglGetUniformLocation'],
   glUniform4i: function(location, v0, v1, v2, v3) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform4i', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform4i', 'location');
 #endif
-    GLctx.uniform4i(GL.uniforms[location], v0, v1, v2, v3);
+    GLctx.uniform4i(webglGetUniformLocation(location), v0, v1, v2, v3);
   },
 
   glUniform1iv__sig: 'viii',
+  glUniform1iv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '_miniTempWebGLIntBuffers'
+#endif
+  ],
   glUniform1iv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform1iv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform1iv', 'location');
     assert((value & 3) == 0, 'Pointer to integer data passed to glUniform1iv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform1iv(webglGetUniformLocation(location), HEAP32, value>>2, count);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform1iv(GL.uniforms[location], HEAP32, value>>2, count);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform1iv(webglGetUniformLocation(location), HEAP32, value>>2, count);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferIntViews[count-1];
+      var view = __miniTempWebGLIntBuffers[count-1];
       for (var i = 0; i < count; ++i) {
         view[i] = {{{ makeGetValue('value', '4*i', 'i32') }}};
       }
@@ -2251,27 +2316,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Int32Array(view);
 #endif
     }
-    GLctx.uniform1iv(GL.uniforms[location], view);
+    GLctx.uniform1iv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform2iv__sig: 'viii',
+  glUniform2iv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '_miniTempWebGLIntBuffers'
+#endif
+  ],
   glUniform2iv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform2iv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform2iv', 'location');
     assert((value & 3) == 0, 'Pointer to integer data passed to glUniform2iv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform2iv(webglGetUniformLocation(location), HEAP32, value>>2, count*2);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform2iv(GL.uniforms[location], HEAP32, value>>2, count*2);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform2iv(webglGetUniformLocation(location), HEAP32, value>>2, count*2);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (2*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 2 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferIntViews[2*count-1];
+      var view = __miniTempWebGLIntBuffers[2*count-1];
       for (var i = 0; i < 2*count; i += 2) {
         view[i] = {{{ makeGetValue('value', '4*i', 'i32') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'i32') }}};
@@ -2284,27 +2362,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Int32Array(view);
 #endif
     }
-    GLctx.uniform2iv(GL.uniforms[location], view);
+    GLctx.uniform2iv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform3iv__sig: 'viii',
+  glUniform3iv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '_miniTempWebGLIntBuffers'
+#endif
+  ],
   glUniform3iv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform3iv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform3iv', 'location');
     assert((value & 3) == 0, 'Pointer to integer data passed to glUniform3iv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform3iv(webglGetUniformLocation(location), HEAP32, value>>2, count*3);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform3iv(GL.uniforms[location], HEAP32, value>>2, count*3);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform3iv(webglGetUniformLocation(location), HEAP32, value>>2, count*3);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (3*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 3 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferIntViews[3*count-1];
+      var view = __miniTempWebGLIntBuffers[3*count-1];
       for (var i = 0; i < 3*count; i += 3) {
         view[i] = {{{ makeGetValue('value', '4*i', 'i32') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'i32') }}};
@@ -2318,27 +2409,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Int32Array(view);
 #endif
     }
-    GLctx.uniform3iv(GL.uniforms[location], view);
+    GLctx.uniform3iv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform4iv__sig: 'viii',
+  glUniform4iv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '_miniTempWebGLIntBuffers'
+#endif
+  ],
   glUniform4iv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform4iv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform4iv', 'location');
     assert((value & 3) == 0, 'Pointer to integer data passed to glUniform4iv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform4iv(webglGetUniformLocation(location), HEAP32, value>>2, count*4);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform4iv(GL.uniforms[location], HEAP32, value>>2, count*4);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform4iv(webglGetUniformLocation(location), HEAP32, value>>2, count*4);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (4*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 4 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferIntViews[4*count-1];
+      var view = __miniTempWebGLIntBuffers[4*count-1];
       for (var i = 0; i < 4*count; i += 4) {
         view[i] = {{{ makeGetValue('value', '4*i', 'i32') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'i32') }}};
@@ -2353,27 +2457,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Int32Array(view);
 #endif
     }
-    GLctx.uniform4iv(GL.uniforms[location], view);
+    GLctx.uniform4iv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform1fv__sig: 'viii',
+  glUniform1fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniform1fv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform1fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform1fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniform1fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform1fv(webglGetUniformLocation(location), HEAPF32, value>>2, count);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform1fv(GL.uniforms[location], HEAPF32, value>>2, count);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform1fv(webglGetUniformLocation(location), HEAPF32, value>>2, count);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[count-1];
+      var view = miniTempWebGLFloatBuffers[count-1];
       for (var i = 0; i < count; ++i) {
         view[i] = {{{ makeGetValue('value', '4*i', 'float') }}};
       }
@@ -2385,27 +2502,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniform1fv(GL.uniforms[location], view);
+    GLctx.uniform1fv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform2fv__sig: 'viii',
+  glUniform2fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniform2fv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform2fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform2fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniform2fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform2fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*2);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform2fv(GL.uniforms[location], HEAPF32, value>>2, count*2);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform2fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*2);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (2*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 2 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[2*count-1];
+      var view = miniTempWebGLFloatBuffers[2*count-1];
       for (var i = 0; i < 2*count; i += 2) {
         view[i] = {{{ makeGetValue('value', '4*i', 'float') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'float') }}};
@@ -2418,27 +2548,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniform2fv(GL.uniforms[location], view);
+    GLctx.uniform2fv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform3fv__sig: 'viii',
+  glUniform3fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniform3fv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform3fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform3fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniform3fv must be aligned to four bytes!' + value);
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform3fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*3);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform3fv(GL.uniforms[location], HEAPF32, value>>2, count*3);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform3fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*3);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (3*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 3 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[3*count-1];
+      var view = miniTempWebGLFloatBuffers[3*count-1];
       for (var i = 0; i < 3*count; i += 3) {
         view[i] = {{{ makeGetValue('value', '4*i', 'float') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'float') }}};
@@ -2452,27 +2595,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniform3fv(GL.uniforms[location], view);
+    GLctx.uniform3fv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniform4fv__sig: 'viii',
+  glUniform4fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniform4fv: function(location, count, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniform4fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniform4fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniform4fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniform4fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*4);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniform4fv(GL.uniforms[location], HEAPF32, value>>2, count*4);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniform4fv(webglGetUniformLocation(location), HEAPF32, value>>2, count*4);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (4*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 4 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[4*count-1];
+      var view = miniTempWebGLFloatBuffers[4*count-1];
       // hoist the heap out of the loop for size and for pthreads+growth.
       var heap = HEAPF32;
       value >>= 2;
@@ -2491,27 +2647,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniform4fv(GL.uniforms[location], view);
+    GLctx.uniform4fv(webglGetUniformLocation(location), view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniformMatrix2fv__sig: 'viiii',
+  glUniformMatrix2fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniformMatrix2fv: function(location, count, transpose, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniformMatrix2fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniformMatrix2fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniformMatrix2fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniformMatrix2fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*4);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniformMatrix2fv(GL.uniforms[location], !!transpose, HEAPF32, value>>2, count*4);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniformMatrix2fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*4);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (4*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 4 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[4*count-1];
+      var view = miniTempWebGLFloatBuffers[4*count-1];
       for (var i = 0; i < 4*count; i += 4) {
         view[i] = {{{ makeGetValue('value', '4*i', 'float') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'float') }}};
@@ -2526,27 +2695,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniformMatrix2fv(GL.uniforms[location], !!transpose, view);
+    GLctx.uniformMatrix2fv(webglGetUniformLocation(location), !!transpose, view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniformMatrix3fv__sig: 'viiii',
+  glUniformMatrix3fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniformMatrix3fv: function(location, count, transpose, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniformMatrix3fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniformMatrix3fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniformMatrix3fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniformMatrix3fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*9);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniformMatrix3fv(GL.uniforms[location], !!transpose, HEAPF32, value>>2, count*9);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniformMatrix3fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*9);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (9*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 9 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[9*count-1];
+      var view = miniTempWebGLFloatBuffers[9*count-1];
       for (var i = 0; i < 9*count; i += 9) {
         view[i] = {{{ makeGetValue('value', '4*i', 'float') }}};
         view[i+1] = {{{ makeGetValue('value', '4*i+4', 'float') }}};
@@ -2566,27 +2748,40 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniformMatrix3fv(GL.uniforms[location], !!transpose, view);
+    GLctx.uniformMatrix3fv(webglGetUniformLocation(location), !!transpose, view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glUniformMatrix4fv__sig: 'viiii',
+  glUniformMatrix4fv__deps: ['$webglGetUniformLocation'
+#if GL_POOL_TEMP_BUFFERS && MIN_WEBGL_VERSION == 1
+    , '$miniTempWebGLFloatBuffers'
+#endif
+  ],
   glUniformMatrix4fv: function(location, count, transpose, value) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.uniforms, location, 'glUniformMatrix4fv', 'location');
+    GL.validateGLObjectID(GLctx.currentProgram.uniformLocsById, location, 'glUniformMatrix4fv', 'location');
     assert((value & 3) == 0, 'Pointer to float data passed to glUniformMatrix4fv must be aligned to four bytes!');
 #endif
 
+#if MIN_WEBGL_VERSION >= 2
+#if GL_ASSERTIONS
+    assert(GL.currentContext.version >= 2);
+#endif
+    GLctx.uniformMatrix4fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*16);
+#else
+
 #if MAX_WEBGL_VERSION >= 2
-    if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
-      GLctx.uniformMatrix4fv(GL.uniforms[location], !!transpose, HEAPF32, value>>2, count*16);
+    if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      GLctx.uniformMatrix4fv(webglGetUniformLocation(location), !!transpose, HEAPF32, value>>2, count*16);
       return;
     }
 #endif
 
 #if GL_POOL_TEMP_BUFFERS
-    if (16*count <= GL.MINI_TEMP_BUFFER_SIZE) {
+    if (count <= {{{ GL_POOL_TEMP_BUFFERS_SIZE / 16 }}}) {
       // avoid allocation when uploading few enough uniforms
-      var view = GL.miniTempBufferFloatViews[16*count-1];
+      var view = miniTempWebGLFloatBuffers[16*count-1];
       // hoist the heap out of the loop for size and for pthreads+growth.
       var heap = HEAPF32;
       value >>= 2;
@@ -2617,7 +2812,8 @@ var LibraryGL = {
       if (GL.currentContext.cannotHandleOffsetsInUniformArrayViews) view = new Float32Array(view);
 #endif
     }
-    GLctx.uniformMatrix4fv(GL.uniforms[location], !!transpose, view);
+    GLctx.uniformMatrix4fv(webglGetUniformLocation(location), !!transpose, view);
+#endif // MIN_WEBGL_VERSION >= 2
   },
 
   glBindBuffer__sig: 'vii',
@@ -2627,12 +2823,12 @@ var LibraryGL = {
 #endif
 #if FULL_ES2 || LEGACY_GL_EMULATION
     if (target == 0x8892 /*GL_ARRAY_BUFFER*/) {
-      GL.currArrayBuffer = buffer;
+      GLctx.currentArrayBufferBinding = buffer;
 #if LEGACY_GL_EMULATION
       GLImmediate.lastArrayBuffer = buffer;
 #endif
     } else if (target == 0x8893 /*GL_ELEMENT_ARRAY_BUFFER*/) {
-      GL.currElementArrayBuffer = buffer;
+      GLctx.currentElementArrayBufferBinding = buffer;
     }
 #endif
 
@@ -2699,25 +2895,42 @@ var LibraryGL = {
     return GLctx.getAttribLocation(GL.programs[program], UTF8ToString(name));
   },
 
-  glGetActiveAttrib__sig: 'viiiiiii',
-  glGetActiveAttrib: function(program, index, bufSize, length, size, type, name) {
+  _glGetActiveAttribOrUniform: function(funcName, program, index, bufSize, length, size, type, name) {
 #if GL_ASSERTIONS
-    GL.validateGLObjectID(GL.programs, program, 'glGetActiveAttrib', 'program');
+    GL.validateGLObjectID(GL.programs, program, funcName, 'program');
 #endif
     program = GL.programs[program];
-    var info = GLctx.getActiveAttrib(program, index);
-    if (!info) return; // If an error occurs, nothing will be written to length, size and type and name.
+    var info = GLctx[funcName](program, index);
+    if (info) { // If an error occurs, nothing will be written to length, size and type and name.
+      var numBytesWrittenExclNull = name && stringToUTF8(info.name, name, bufSize);
+      if (length) {{{ makeSetValue('length', '0', 'numBytesWrittenExclNull', 'i32') }}};
+      if (size) {{{ makeSetValue('size', '0', 'info.size', 'i32') }}};
+      if (type) {{{ makeSetValue('type', '0', 'info.type', 'i32') }}};
+    }
+  },
 
-    var numBytesWrittenExclNull = (bufSize > 0 && name) ? stringToUTF8(info.name, name, bufSize) : 0;
-    if (length) {{{ makeSetValue('length', '0', 'numBytesWrittenExclNull', 'i32') }}};
-    if (size) {{{ makeSetValue('size', '0', 'info.size', 'i32') }}};
-    if (type) {{{ makeSetValue('type', '0', 'info.type', 'i32') }}};
+  glGetActiveAttrib__sig: 'viiiiiii',
+  glGetActiveAttrib__deps: ['_glGetActiveAttribOrUniform'],
+  glGetActiveAttrib: function(program, index, bufSize, length, size, type, name) {
+    __glGetActiveAttribOrUniform('getActiveAttrib', program, index, bufSize, length, size, type, name);
+  },
+
+  glGetActiveUniform__sig: 'viiiiiii',
+  glGetActiveUniform__deps: ['_glGetActiveAttribOrUniform'],
+  glGetActiveUniform: function(program, index, bufSize, length, size, type, name) {
+    __glGetActiveAttribOrUniform('getActiveUniform', program, index, bufSize, length, size, type, name);
   },
 
   glCreateShader__sig: 'ii',
   glCreateShader: function(shaderType) {
     var id = GL.getNewId(GL.shaders);
     GL.shaders[id] = GLctx.createShader(shaderType);
+
+#if GL_EXPLICIT_UNIFORM_LOCATION
+    // GL_VERTEX_SHADER = 0x8B31, GL_FRAGMENT_SHADER = 0x8B30
+    GL.shaders[id].shaderType = shaderType&1?'vs':'fs';
+#endif
+
     return id;
   },
 
@@ -2754,6 +2967,9 @@ var LibraryGL = {
   },
 
   glShaderSource__sig: 'viiii',
+#if GL_EXPLICIT_UNIFORM_LOCATION
+  glShaderSource__deps: ['$preprocess_c_code', '$remove_cpp_comments_in_shaders'],
+#endif
   glShaderSource: function(shader, count, string, length) {
 #if GL_ASSERTIONS
     GL.validateGLObjectID(GL.shaders, shader, 'glShaderSource', 'shader');
@@ -2761,7 +2977,7 @@ var LibraryGL = {
     var source = GL.getSource(shader, count, string, length);
 
 #if WEBGL2_BACKWARDS_COMPATIBILITY_EMULATION
-    if (GL.currentContext.version >= 2) {
+    if ({{{ isCurrentContextWebGL2() }}}) {
       // If a WebGL 1 shader happens to use GL_EXT_shader_texture_lod extension,
       // it will not compile on WebGL 2, because WebGL 2 no longer supports that
       // extension for WebGL 1 shaders. Therefore upgrade shaders to WebGL 2
@@ -2801,6 +3017,45 @@ var LibraryGL = {
       }
     }
 #endif
+
+#if GL_EXPLICIT_UNIFORM_LOCATION
+#if GL_DEBUG
+    console.log('Input shader source: ' + source);
+#endif
+    // Remove comments and C-preprocess the input shader first, so that we can appropriately
+    // parse the layout location directives.
+    source = preprocess_c_code(remove_cpp_comments_in_shaders(source));
+#if GL_DEBUG
+    console.log('Shader source after preprocessing: ' + source);
+#endif
+    // Extract the layout(location = x) directives.
+    var regex = /layout\s*\(\s*location\s*=\s*([-\d]+)\s*\)\s*(uniform\s+\w+\s+(\w+))/g, explicitUniformLocations = {}, match;
+    while(match = regex.exec(source)) {
+#if GL_DEBUG
+      console.dir(match);
+#endif
+      explicitUniformLocations[match[3]] = parseInt(match[1]);
+#if GL_ASSERTIONS
+      if (!(explicitUniformLocations[match[3]] >= 0 && explicitUniformLocations[match[3]] < 1048576)) {
+        console.error('Specified an out of range layout(location=x) specifier "' + explicitUniformLocations[match[3]] + '"! (' + match[0] + ')');
+      }
+#endif
+    }
+
+    // Remove all the layout(location = x) directives so that they do not make
+    // their way to the actual WebGL shader compiler.
+    source = source.replace(regex, '$2');
+
+    // Remember all the directives to be handled after glLinkProgram is called.
+    GL.shaders[shader].explicitUniformLocations = explicitUniformLocations;
+
+#if GL_DEBUG
+    console.log('Shader source after removing layout location directives: ' + source);
+    console.log('Explicit uniform locations recorded in the shader:');
+    console.dir(explicitUniformLocations);
+#endif
+
+#endif // ~GL_EXPLICIT_UNIFORM_LOCATION
 
     GLctx.shaderSource(GL.shaders[shader], source);
   },
@@ -2860,10 +3115,17 @@ var LibraryGL = {
 #if GL_ASSERTIONS || GL_TRACK_ERRORS
       if (log === null) log = '(unknown error)';
 #endif
-      {{{ makeSetValue('p', '0', 'log.length + 1', 'i32') }}};
+      // The GLES2 specification says that if the shader has an empty info log,
+      // a value of 0 is returned. Otherwise the log has a null char appended.
+      // (An empty string is falsey, so we can just check that instead of
+      // looking at log.length.)
+      var logLength = log ? log.length + 1 : 0;
+      {{{ makeSetValue('p', '0', 'logLength', 'i32') }}};
     } else if (pname == 0x8B88) { // GL_SHADER_SOURCE_LENGTH
       var source = GLctx.getShaderSource(GL.shaders[shader]);
-      var sourceLength = (source === null || source.length == 0) ? 0 : source.length + 1;
+      // source may be a null, or the empty string, both of which are falsey
+      // values that we report a 0 length for.
+      var sourceLength = source ? source.length + 1 : 0;
       {{{ makeSetValue('p', '0', 'sourceLength', 'i32') }}};
     } else {
       {{{ makeSetValue('p', '0', 'GLctx.getShaderParameter(GL.shaders[shader], pname)', 'i32') }}};
@@ -2893,47 +3155,37 @@ var LibraryGL = {
       return;
     }
 
-    var ptable = GL.programInfos[program];
-    if (!ptable) {
-#if GL_ASSERTIONS
-      err('GL_INVALID_OPERATION in glGetProgramiv(program=' + program + ', pname=' + pname + ', p=0x' + p.toString(16) + '): The specified GL object name does not refer to a program object!');
-#endif
-      GL.recordError(0x502 /* GL_INVALID_OPERATION */);
-      return;
-    }
+    program = GL.programs[program];
 
     if (pname == 0x8B84) { // GL_INFO_LOG_LENGTH
-      var log = GLctx.getProgramInfoLog(GL.programs[program]);
+      var log = GLctx.getProgramInfoLog(program);
 #if GL_ASSERTIONS || GL_TRACK_ERRORS
       if (log === null) log = '(unknown error)';
 #endif
       {{{ makeSetValue('p', '0', 'log.length + 1', 'i32') }}};
     } else if (pname == 0x8B87 /* GL_ACTIVE_UNIFORM_MAX_LENGTH */) {
-      {{{ makeSetValue('p', '0', 'ptable.maxUniformLength', 'i32') }}};
+      if (!program.maxUniformLength) {
+        for (var i = 0; i < GLctx.getProgramParameter(program, 0x8B86/*GL_ACTIVE_UNIFORMS*/); ++i) {
+          program.maxUniformLength = Math.max(program.maxUniformLength, GLctx.getActiveUniform(program, i).name.length+1);
+        }
+      }
+      {{{ makeSetValue('p', '0', 'program.maxUniformLength', 'i32') }}};
     } else if (pname == 0x8B8A /* GL_ACTIVE_ATTRIBUTE_MAX_LENGTH */) {
-      if (ptable.maxAttributeLength == -1) {
-        program = GL.programs[program];
-        var numAttribs = GLctx.getProgramParameter(program, 0x8B89/*GL_ACTIVE_ATTRIBUTES*/);
-        ptable.maxAttributeLength = 0; // Spec says if there are no active attribs, 0 must be returned.
-        for (var i = 0; i < numAttribs; ++i) {
-          var activeAttrib = GLctx.getActiveAttrib(program, i);
-          ptable.maxAttributeLength = Math.max(ptable.maxAttributeLength, activeAttrib.name.length+1);
+      if (!program.maxAttributeLength) {
+        for (var i = 0; i < GLctx.getProgramParameter(program, 0x8B89/*GL_ACTIVE_ATTRIBUTES*/); ++i) {
+          program.maxAttributeLength = Math.max(program.maxAttributeLength, GLctx.getActiveAttrib(program, i).name.length+1);
         }
       }
-      {{{ makeSetValue('p', '0', 'ptable.maxAttributeLength', 'i32') }}};
+      {{{ makeSetValue('p', '0', 'program.maxAttributeLength', 'i32') }}};
     } else if (pname == 0x8A35 /* GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH */) {
-      if (ptable.maxUniformBlockNameLength == -1) {
-        program = GL.programs[program];
-        var numBlocks = GLctx.getProgramParameter(program, 0x8A36/*GL_ACTIVE_UNIFORM_BLOCKS*/);
-        ptable.maxUniformBlockNameLength = 0;
-        for (var i = 0; i < numBlocks; ++i) {
-          var activeBlockName = GLctx.getActiveUniformBlockName(program, i);
-          ptable.maxUniformBlockNameLength = Math.max(ptable.maxUniformBlockNameLength, activeBlockName.length+1);
+      if (!program.maxUniformBlockNameLength) {
+        for (var i = 0; i < GLctx.getProgramParameter(program, 0x8A36/*GL_ACTIVE_UNIFORM_BLOCKS*/); ++i) {
+          program.maxUniformBlockNameLength = Math.max(program.maxUniformBlockNameLength, GLctx.getActiveUniformBlockName(program, i).length+1);
         }
       }
-      {{{ makeSetValue('p', '0', 'ptable.maxUniformBlockNameLength', 'i32') }}};
+      {{{ makeSetValue('p', '0', 'program.maxUniformBlockNameLength', 'i32') }}};
     } else {
-      {{{ makeSetValue('p', '0', 'GLctx.getProgramParameter(GL.programs[program], pname)', 'i32') }}};
+      {{{ makeSetValue('p', '0', 'GLctx.getProgramParameter(program, pname)', 'i32') }}};
     }
   },
 
@@ -2948,7 +3200,11 @@ var LibraryGL = {
   glCreateProgram: function() {
     var id = GL.getNewId(GL.programs);
     var program = GLctx.createProgram();
+    // Store additional information needed for each shader program:
     program.name = id;
+    // Lazy cache results of glGetProgramiv(GL_ACTIVE_UNIFORM_MAX_LENGTH/GL_ACTIVE_ATTRIBUTE_MAX_LENGTH/GL_ACTIVE_UNIFORM_BLOCK_MAX_NAME_LENGTH)
+    program.maxUniformLength = program.maxAttributeLength = program.maxUniformBlockNameLength = 0;
+    program.uniformIdCounter = 1;
     GL.programs[id] = program;
     return id;
   },
@@ -2964,7 +3220,6 @@ var LibraryGL = {
     GLctx.deleteProgram(program);
     program.name = 0;
     GL.programs[id] = null;
-    GL.programInfos[id] = null;
   },
 
   glAttachShader__sig: 'vii',
@@ -2973,8 +3228,14 @@ var LibraryGL = {
     GL.validateGLObjectID(GL.programs, program, 'glAttachShader', 'program');
     GL.validateGLObjectID(GL.shaders, shader, 'glAttachShader', 'shader');
 #endif
-    GLctx.attachShader(GL.programs[program],
-                            GL.shaders[shader]);
+#if GL_EXPLICIT_UNIFORM_LOCATION
+    program = GL.programs[program];
+    shader = GL.shaders[shader];
+    program[shader.shaderType] = shader;
+    GLctx.attachShader(program, shader);
+#else
+    GLctx.attachShader(GL.programs[program], GL.shaders[shader]);
+#endif
   },
 
   glDetachShader__sig: 'vii',
@@ -2983,8 +3244,7 @@ var LibraryGL = {
     GL.validateGLObjectID(GL.programs, program, 'glDetachShader', 'program');
     GL.validateGLObjectID(GL.shaders, shader, 'glDetachShader', 'shader');
 #endif
-    GLctx.detachShader(GL.programs[program],
-                            GL.shaders[shader]);
+    GLctx.detachShader(GL.programs[program], GL.shaders[shader]);
   },
 
   glGetShaderPrecisionFormat__sig: 'viiii',
@@ -3000,12 +3260,36 @@ var LibraryGL = {
 #if GL_ASSERTIONS
     GL.validateGLObjectID(GL.programs, program, 'glLinkProgram', 'program');
 #endif
-    GLctx.linkProgram(GL.programs[program]);
+    program = GL.programs[program];
+    GLctx.linkProgram(program);
 #if GL_DEBUG
-    var log = (GLctx.getProgramInfoLog(GL.programs[program]) || '').trim();
+    var log = (GLctx.getProgramInfoLog(program) || '').trim();
     if (log) console.error('glLinkProgram: ' + log);
+    if (program.uniformLocsById) console.log('glLinkProgram invalidated ' + Object.keys(program.uniformLocsById).length + ' uniform location mappings');
 #endif
-    GL.populateUniformTable(program);
+    // Invalidate earlier computed uniform->ID mappings, those have now become stale
+    program.uniformLocsById = 0; // Mark as null-like so that glGetUniformLocation() knows to populate this again.
+    program.uniformSizeAndIdsByName = {};
+
+#if GL_EXPLICIT_UNIFORM_LOCATION
+    // Collect explicit uniform locations from the vertex and fragment shaders.
+    [program['vs'], program['fs']].forEach((s) => {
+      Object.keys(s.explicitUniformLocations).forEach((shaderLocation) => {
+        var loc = s.explicitUniformLocations[shaderLocation];
+        // Record each explicit uniform location temporarily as a non-array uniform
+        // with size=1, this is not true, but on the first glGetUniformLocation() call
+        // the array sizes will get populated to correct sizes.
+        program.uniformSizeAndIdsByName[shaderLocation] = [1, loc];
+#if GL_DEBUG
+        console.log('Marking uniform ' + loc + ' to location ' + shaderLocation);
+#endif
+
+        // Make sure we will never automatically assign locations within the range
+        // used for explicit layout(location=x) variables.
+        program.uniformIdCounter = Math.max(program.uniformIdCounter, loc);
+      });
+    });
+#endif
   },
 
   glGetProgramInfoLog__sig: 'viiii',
@@ -3026,7 +3310,11 @@ var LibraryGL = {
 #if GL_ASSERTIONS
     GL.validateGLObjectID(GL.programs, program, 'glUseProgram', 'program');
 #endif
-    GLctx.useProgram(GL.programs[program]);
+    program = GL.programs[program];
+    GLctx.useProgram(program);
+    // Record the currently active program so that we can access the uniform
+    // mapping table of that program.
+    GLctx.currentProgram = program;
   },
 
   glValidateProgram__sig: 'vi',
@@ -3181,7 +3469,7 @@ var LibraryGL = {
 #endif
 #if FULL_ES2 || LEGACY_GL_EMULATION
     var ibo = GLctx.getParameter(0x8895 /*ELEMENT_ARRAY_BUFFER_BINDING*/);
-    GL.currElementArrayBuffer = ibo ? (ibo.name | 0) : 0;
+    GLctx.currentElementArrayBufferBinding = ibo ? (ibo.name | 0) : 0;
 #endif
   },
 
@@ -3297,7 +3585,7 @@ var LibraryGL = {
 #if GL_ASSERTIONS
     assert(cb, index);
 #endif
-    if (!GL.currArrayBuffer) {
+    if (!GLctx.currentArrayBufferBinding) {
       cb.size = size;
       cb.type = type;
       cb.normalized = normalized;
@@ -3360,7 +3648,7 @@ var LibraryGL = {
   glDrawElements: function(mode, count, type, indices) {
 #if FULL_ES2
     var buf;
-    if (!GL.currElementArrayBuffer) {
+    if (!GLctx.currentElementArrayBufferBinding) {
       var size = GL.calcBufLength(1, type, 0, count);
       buf = GL.getTempIndexBuffer(size);
       GLctx.bindBuffer(0x8893 /*GL_ELEMENT_ARRAY_BUFFER*/, buf);
@@ -3380,7 +3668,7 @@ var LibraryGL = {
 #if FULL_ES2
     GL.postDrawHandleClientVertexAttribBindings(count);
 
-    if (!GL.currElementArrayBuffer) {
+    if (!GLctx.currentElementArrayBufferBinding) {
       GLctx.bindBuffer(0x8893 /*GL_ELEMENT_ARRAY_BUFFER*/, null);
     }
 #endif
@@ -3453,17 +3741,17 @@ var LibraryGL = {
   glDrawElementsInstancedANGLE: 'glDrawElementsInstanced',
 
 
-  glDrawBuffers__deps: ['_tempFixedLengthArray'],
+  glDrawBuffers__deps: ['$tempFixedLengthArray'],
   glDrawBuffers__sig: 'vii',
   glDrawBuffers: function(n, bufs) {
 #if GL_ASSERTIONS
     assert(GLctx['drawBuffers'], 'Must have WebGL2 or WEBGL_draw_buffers extension to use drawBuffers');
 #endif
 #if GL_ASSERTIONS
-    assert(n < __tempFixedLengthArray.length, 'Invalid count of numBuffers=' + n + ' passed to glDrawBuffers (that many draw buffer points do not exist in GL)');
+    assert(n < tempFixedLengthArray.length, 'Invalid count of numBuffers=' + n + ' passed to glDrawBuffers (that many draw buffer points do not exist in GL)');
 #endif
 
-    var bufArray = __tempFixedLengthArray[n];
+    var bufArray = tempFixedLengthArray[n];
     for (var i = 0; i < n; i++) {
       bufArray[i] = {{{ makeGetValue('bufs', 'i*4', 'i32') }}};
     }
@@ -3493,11 +3781,67 @@ var LibraryGL = {
     GLctx.sampleCoverage(value, !!invert);
   },
 
+  glMultiDrawArraysWEBGL__sig: 'viiii',
+  glMultiDrawArrays: 'glMultiDrawArraysWEBGL',
+  glMultiDrawArraysANGLE: 'glMultiDrawArraysWEBGL',
+  glMultiDrawArraysWEBGL: function(mode, firsts, counts, drawcount) {
+    GLctx.multiDrawWebgl['multiDrawArraysWEBGL'](
+      mode,
+      HEAP32,
+      firsts >> 2,
+      HEAP32,
+      counts >> 2,
+      drawcount);
+  },
+
+  glMultiDrawArraysInstancedWEBGL__sig: 'viiiii',
+  glMultiDrawArraysInstancedANGLE: 'glMultiDrawArraysInstancedWEBGL',
+  glMultiDrawArraysInstancedWEBGL: function(mode, firsts, counts, instanceCounts, drawcount) {
+    GLctx.multiDrawWebgl['multiDrawArraysInstancedWEBGL'](
+      mode,
+      HEAP32,
+      firsts >> 2,
+      HEAP32,
+      counts >> 2,
+      HEAP32,
+      instanceCounts >> 2,
+      drawcount);
+  },
+
+  glMultiDrawElementsWEBGL__sig: 'viiiii',
+  glMultiDrawElements: 'glMultiDrawElementsWEBGL',
+  glMultiDrawElementsANGLE: 'glMultiDrawElementsWEBGL',
+  glMultiDrawElementsWEBGL: function(mode, counts, type, offsets, drawcount) {
+    GLctx.multiDrawWebgl['multiDrawElementsWEBGL'](
+      mode,
+      HEAP32,
+      counts >> 2,
+      type,
+      HEAP32,
+      offsets >> 2,
+      drawcount);
+  },
+
+  glMultiDrawElementsInstancedWEBGL__sig: 'viiiiii',
+  glMultiDrawElementsInstancedANGLE: 'glMultiDrawElementsInstancedWEBGL',
+  glMultiDrawElementsInstancedWEBGL: function(mode, counts, type, offsets, instanceCounts, drawcount) {
+    GLctx.multiDrawWebgl['multiDrawElementsInstancedWEBGL'](
+      mode,
+      HEAP32,
+      counts >> 2,
+      type,
+      HEAP32,
+      offsets >> 2,
+      HEAP32,
+      instanceCounts >> 2,
+      drawcount);
+  },
+
   // As a small peculiarity, we currently allow building with -s FULL_ES3=1 to emulate client side arrays,
   // but without targeting WebGL 2, so this FULL_ES3 block is in library_webgl.js instead of library_webgl2.js
 #if FULL_ES3
   $emscriptenWebGLGetBufferBinding: function(target) {
-    switch(target) {
+    switch (target) {
       case 0x8892 /*GL_ARRAY_BUFFER*/: target = 0x8894 /*GL_ARRAY_BUFFER_BINDING*/; break;
       case 0x8893 /*GL_ELEMENT_ARRAY_BUFFER*/: target = 0x8895 /*GL_ELEMENT_ARRAY_BUFFER_BINDING*/; break;
       case 0x88EB /*GL_PIXEL_PACK_BUFFER*/: target = 0x88ED /*GL_PIXEL_PACK_BUFFER_BINDING*/; break;
@@ -3584,18 +3928,18 @@ var LibraryGL = {
     var mapping = GL.mappedBuffers[emscriptenWebGLGetBufferBinding(target)];
     if (!mapping) {
       GL.recordError(0x502 /* GL_INVALID_OPERATION */);
-      Module.printError('buffer was never mapped in glFlushMappedBufferRange');
+      err('buffer was never mapped in glFlushMappedBufferRange');
       return;
     }
 
     if (!(mapping.access & 0x10)) {
       GL.recordError(0x502 /* GL_INVALID_OPERATION */);
-      Module.printError('buffer was not mapped with GL_MAP_FLUSH_EXPLICIT_BIT in glFlushMappedBufferRange');
+      err('buffer was not mapped with GL_MAP_FLUSH_EXPLICIT_BIT in glFlushMappedBufferRange');
       return;
     }
     if (offset < 0 || length < 0 || offset + length > mapping.length) {
       GL.recordError(0x501 /* GL_INVALID_VALUE */);
-      Module.printError('invalid range in glFlushMappedBufferRange');
+      err('invalid range in glFlushMappedBufferRange');
       return;
     }
 
@@ -3618,13 +3962,13 @@ var LibraryGL = {
     var mapping = GL.mappedBuffers[buffer];
     if (!mapping) {
       GL.recordError(0x502 /* GL_INVALID_OPERATION */);
-      Module.printError('buffer was never mapped in glUnmapBuffer');
+      err('buffer was never mapped in glUnmapBuffer');
       return 0;
     }
     GL.mappedBuffers[buffer] = null;
 
     if (!(mapping.access & 0x10)) /* GL_MAP_FLUSH_EXPLICIT_BIT */
-      if (GL.currentContext.version >= 2) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
+      if ({{{ isCurrentContextWebGL2() }}}) { // WebGL 2 provides new garbage-free entry points to call to WebGL. Use those always when possible.
         GLctx.bufferSubData(target, mapping.offset, HEAPU8, mapping.mem, mapping.length);
       } else {
         GLctx.bufferSubData(target, mapping.offset, HEAPU8.subarray(mapping.mem, mapping.mem+mapping.length));
@@ -3723,7 +4067,6 @@ function copyLibEntry(lib, a, b) {
   lib[a + '__postset'] = lib[b + '__postset'];
   lib[a + '__proxy'] = lib[b + '__proxy'];
   lib[a + '__sig'] = lib[b + '__sig'];
-  lib[a + '__asm'] = lib[b + '__asm'];
   lib[a + '__deps'] = (lib[b + '__deps'] || []).slice(0);
 }
 

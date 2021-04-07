@@ -11,18 +11,19 @@ TAG = 'version_7'
 HASH = 'a921dab254f21cf5d397581c5efe58faf147c31527228b4fb34aed75164c736af4b3347092a8d9ec1249160230fa163309a87a20c2b9ceef8554566cc215de9d'
 
 
-def get_lib_name(ports, settings):
-  return ports.get_lib_name('libregal' + ('-mt' if settings.USE_PTHREADS else ''))
+def needed(settings):
+  return settings.USE_REGAL
+
+
+def get_lib_name(settings):
+  return 'libregal' + ('-mt' if settings.USE_PTHREADS else '') + '.a'
 
 
 def get(ports, settings, shared):
-  if settings.USE_REGAL != 1:
-    return []
-
   ports.fetch_project('regal', 'https://github.com/emscripten-ports/regal/archive/' + TAG + '.zip',
                       'regal-' + TAG, sha512hash=HASH)
 
-  def create():
+  def create(final):
     logging.info('building port: regal')
     ports.clear_project_build('regal')
 
@@ -45,7 +46,7 @@ def get(ports, settings, shared):
 
     # includes
     source_path_include = os.path.join(ports.get_dir(), 'regal', 'regal-' + TAG, 'include', 'GL')
-    ports.install_header_dir(source_path_include)
+    ports.install_headers(source_path_include, target='GL')
 
     # build
     srcs_regal = ['regal/RegalShaderInstance.cpp',
@@ -111,7 +112,7 @@ def get(ports, settings, shared):
       o = os.path.join(dest_path_src, src + '.o')
       shared.safe_ensure_dirs(os.path.dirname(o))
 
-      command = [shared.PYTHON, shared.EMCC, '-c', c,
+      command = [shared.EMCC, '-c', c,
                  '-DNDEBUG',
                  '-DREGAL_LOG=0',  # Set to 1 if you need to have some logging info
                  '-DREGAL_MISSING=0',  # Set to 1 if you don't want to crash in case of missing GL implementation
@@ -133,26 +134,21 @@ def get(ports, settings, shared):
       o_s.append(o)
 
     ports.run_commands(commands)
-    final = os.path.join(ports.get_build_dir(), 'regal', get_lib_name(ports, settings))
     ports.create_lib(final, o_s)
-    return final
 
-  return [shared.Cache.get(get_lib_name(ports, settings), create, what='port')]
+  return [shared.Cache.get_lib(get_lib_name(settings), create, what='port')]
 
 
-def clear(ports, shared):
-  shared.Cache.erase_file(get_lib_name(ports, shared.Settings))
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib(get_lib_name(settings))
 
 
 def process_dependencies(settings):
-  if settings.USE_REGAL == 1:
-    settings.FULL_ES2 = 1
+  settings.FULL_ES2 = 1
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_REGAL == 1:
-    get(ports, settings, shared)
-  return args
+def process_args(ports):
+  return []
 
 
 def show():

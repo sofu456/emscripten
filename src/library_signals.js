@@ -10,7 +10,7 @@ var funs = {
 
   signal__deps: ['_sigalrm_handler'],
   signal: function(sig, func) {
-    if (sig == 14 /*SIGALRM*/) {
+    if (sig == {{{ cDefine('SIGALRM') }}}) {
       __sigalrm_handler = func;
     } else {
 #if ASSERTIONS
@@ -19,6 +19,8 @@ var funs = {
     }
     return 0;
   },
+  bsd_signal__sig: 'iii',
+  bsd_signal: 'signal',
   sigemptyset: function(set) {
     {{{ makeSetValue('set', '0', '0', 'i32') }}};
     return 0;
@@ -49,6 +51,11 @@ var funs = {
 #if ASSERTIONS
     err('Calling stub instead of sigprocmask()');
 #endif
+    return 0;
+  },
+  // pthread_sigmask - examine and change mask of blocked signals
+  pthread_sigmask: function(how, set, oldset) {
+    err('pthread_sigmask() is not supported: this is a no-op.');
     return 0;
   },
   __libc_current_sigrtmin: function() {
@@ -106,7 +113,7 @@ var funs = {
   alarm__deps: ['_sigalrm_handler'],
   alarm: function(seconds) {
     setTimeout(function() {
-      if (__sigalrm_handler) {{{ makeDynCall('vi') }}}(__sigalrm_handler, 0);
+      if (__sigalrm_handler) {{{ makeDynCall('vi', '__sigalrm_handler') }}}(0);
     }, seconds*1000);
   },
   ualarm: function() {
@@ -161,7 +168,6 @@ var funs = {
   //sigsetmask
   //siggetmask
   //sigsuspend
-  //bsd_signal
   //siginterrupt
   //sigqueue
   //sysv_signal

@@ -70,9 +70,12 @@ to prevent C++ name mangling.
 To compile this code run the following command in the Emscripten
 home directory::
 
-    ./emcc tests/hello_function.cpp -o function.html -s EXPORTED_FUNCTIONS='["_int_sqrt"]' -s EXTRA_EXPORTED_RUNTIME_METHODS='["ccall", "cwrap"]'
+    ./emcc tests/hello_function.cpp -o function.html -s EXPORTED_FUNCTIONS='["_int_sqrt"]' -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]'
 
-``EXPORTED_FUNCTIONS`` tells the compiler what we want to be accessible from the compiled code (everything else might be removed if it is not used), and ``EXTRA_EXPORTED_RUNTIME_METHODS`` tells the compiler that we want to use the runtime functions ``ccall`` and ``cwrap`` (otherwise, it will remove them if it does not see they are used).
+``EXPORTED_FUNCTIONS`` tells the compiler what we want to be accessible from the
+compiled code (everything else might be removed if it is not used), and
+``EXPORTED_RUNTIME_METHODS`` tells the compiler that we want to use the runtime
+functions ``ccall`` and ``cwrap`` (otherwise, it will not include them).
 
 .. note::
 
@@ -155,8 +158,8 @@ parameters to pass to the function:
      didn't see, like another script tag on the HTML or in the JS console like
      we did in this tutorial, then because of optimizations
      and minification you should export ccall from the runtime, using
-     ``EXTRA_EXPORTED_RUNTIME_METHODS``, for example using
-     ``-s 'EXTRA_EXPORTED_RUNTIME_METHODS=["ccall", "cwrap"]'``,
+     ``EXPORTED_RUNTIME_METHODS``, for example using
+     ``-s 'EXPORTED_RUNTIME_METHODS=["ccall","cwrap"]'``,
      and call it on ``Module`` (which contains
      everything exported, in a safe way that is not influenced by minification
      or optimizations).
@@ -187,18 +190,28 @@ Compile the library with emcc:
 
 .. code:: bash
 
-    emcc api_example.c -o api_example.js
+    emcc api_example.c -o api_example.js -s MODULARIZE -s EXPORTED_RUNTIME_METHODS=['ccall']
 
 Require the library and call its procedures from node:
 
 .. code:: javascript
 
-    var em_module = require('./api_example.js');
+    var factory = require('./a.out.js');
 
-    em_module._sayHi(); // direct calling works
-    em_module.ccall("sayHi"); // using ccall etc. also work
-    console.log(em_module._daysInWeek()); // values can be returned, etc.
+    factory().then((instance) => {
+      instance._sayHi(); // direct calling works
+      instance.ccall("sayHi"); // using ccall etc. also work
+      console.log(instance._daysInWeek()); // values can be returned, etc.
+    });
 
+The ``MODULARIZE`` option makes ``emcc`` emit code in a modular format that is
+easy to import and use with ``require()``: ``require()`` of the module returns
+a factory function that can instantiate the compiled code, returning a
+``Promise`` to tell us when it is ready, and giving us the instance of the
+module as a parameter.
+
+(Note that we use ``ccall`` here, so we need to add it to the exported runtime
+methods, as before.)
 
 .. _interacting-with-code-direct-function-calls:
 
@@ -225,7 +238,7 @@ Strings in JavaScript must be converted to pointers for compiled
 code -- the relevant function is :js:func:`UTF8ToString`, which
 given a pointer returns a JavaScript string. Converting a JavaScript
 string ``someString`` to a pointer can be accomplished using ``ptr = ``
-allocate(intArrayFromString(someString), 'i8', ALLOC_NORMAL) <allocate>``.
+allocate(intArrayFromString(someString), ALLOC_NORMAL) <allocate>``.
 
 .. note:: The conversion to a pointer allocates memory, which needs to be
    freed up via a call to ``free(ptr)`` afterwards (``_free`` in JavaScript side)
@@ -535,29 +548,27 @@ a function,
 
   mergeInto(LibraryManager.library, {
     $method_support__postset: 'method_support();',
-    $method_support: {
-      init: function() {
-        var SomeLib = function() {
-          this.callCount = 0;
-        };
+    $method_support: function() {
+      var SomeLib = function() {
+        this.callCount = 0;
+      };
 
-        SomeLib.prototype.getCallCount = function() {
-          return this.callCount;
-        };
+      SomeLib.prototype.getCallCount = function() {
+        return this.callCount;
+      };
 
-        SomeLib.prototype.process = function() {
-          ++this.callCount;
-        };
+      SomeLib.prototype.process = function() {
+        ++this.callCount;
+      };
 
-        SomeLib.prototype.reset = function() {
-          this.callCount = 0;
-        };
+      SomeLib.prototype.reset = function() {
+        this.callCount = 0;
+      };
 
-        var inst = new SomeLib();
-        _method_01 = inst.getCallCount.bind(inst);
-        _method_02 = inst.process.bind(inst);
-        _method_03 = inst.reset.bind(inst);
-      }
+      var inst = new SomeLib();
+      _method_01 = inst.getCallCount.bind(inst);
+      _method_02 = inst.process.bind(inst);
+      _method_03 = inst.reset.bind(inst);
     },
     method_01: function() {},
     method_01__deps: ['$method_support'],
@@ -574,7 +585,7 @@ See the `library_*.js`_ files for other examples.
 
    - JavaScript libraries can declare dependencies (``__deps``), however
      those are only for other JavaScript libraries. See examples in
-     `/src <https://github.com/emscripten-core/emscripten/tree/master/src>`_
+     `/src <https://github.com/emscripten-core/emscripten/tree/main/src>`_
      with the name format **library_*.js**
    - You can add dependencies for all your methods using
      ``autoAddDeps(myLibrary, name)`` where myLibrary is the object with
@@ -603,12 +614,8 @@ be called.
 
 See `test_add_function in tests/test_core.py`_ for an example.
 
-When using ``addFunction``, there is a backing array where these functions are
-stored. This array must be explicitly sized, which can be done via a
-compile-time setting, ``RESERVED_FUNCTION_POINTERS``. For example, to reserve
-space for 20 functions to be added::
-
-    emcc ... -s RESERVED_FUNCTION_POINTERS=20 ...
+You should build with ``-s ALLOW_TABLE_GROWTH`` to allow new functions to be
+added to the table. Otherwise by default the table has a fixed size.
 
 .. note:: When using ``addFunction`` on LLVM wasm backend, you need to provide
    an additional second argument, a Wasm function signature string. Each
@@ -624,7 +631,7 @@ space for 20 functions to be added::
 
    For example, if you add a function that takes an integer and does not return
    anything, you can do ``addFunction(your_function, 'vi');``. See
-   `tests/interop/test_add_function_post.js <https://github.com/emscripten-core/emscripten/blob/incoming/tests/interop/test_add_function_post.js>`_ for an example.
+   `tests/interop/test_add_function_post.js <https://github.com/emscripten-core/emscripten/blob/main/tests/interop/test_add_function_post.js>`_ for an example.
 
 
 .. _interacting-with-code-access-memory:
@@ -765,13 +772,13 @@ for defining the binding:
    of one tool over the other will usually be based on which is the most
    natural fit for the project and its build system.
 
-.. _library.js: https://github.com/emscripten-core/emscripten/blob/master/src/library.js
+.. _library.js: https://github.com/emscripten-core/emscripten/blob/main/src/library.js
 .. _test_js_libraries: https://github.com/emscripten-core/emscripten/blob/1.29.12/tests/test_core.py#L5043
-.. _src/deps_info.json: https://github.com/emscripten-core/emscripten/blob/master/src/deps_info.json
-.. _tools/system_libs.py: https://github.com/emscripten-core/emscripten/blob/master/tools/system_libs.py
-.. _library_\*.js: https://github.com/emscripten-core/emscripten/tree/master/src
+.. _src/deps_info.json: https://github.com/emscripten-core/emscripten/blob/main/src/deps_info.json
+.. _tools/system_libs.py: https://github.com/emscripten-core/emscripten/blob/main/tools/system_libs.py
+.. _library_\*.js: https://github.com/emscripten-core/emscripten/tree/main/src
 .. _test_add_function in tests/test_core.py: https://github.com/emscripten-core/emscripten/blob/1.29.12/tests/test_core.py#L6237
-.. _tests/core/test_utf.in: https://github.com/emscripten-core/emscripten/blob/master/tests/core/test_utf.in
+.. _tests/core/test_utf.in: https://github.com/emscripten-core/emscripten/blob/main/tests/core/test_utf.in
 .. _tests/test_core.py: https://github.com/emscripten-core/emscripten/blob/1.29.12/tests/test_core.py#L4597
 .. _Box2D: https://github.com/kripken/box2d.js/#box2djs
 .. _Bullet: https://github.com/kripken/ammo.js/#ammojs

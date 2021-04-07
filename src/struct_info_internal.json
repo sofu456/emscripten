@@ -1,0 +1,35 @@
+[
+    // ===========================================
+    // libc - internal
+    // ===========================================
+    {
+        "file": "pthread_impl.h",
+        "structs": {
+            "pthread": [
+              "threadStatus",
+              "threadExitCode",
+              "profilerBlock",
+              "self",
+              "tsd",
+              "detached",
+              "stack",
+              "stack_size",
+              "attr",
+              "robust_list",
+              "tid",
+              "canceldisable",
+              "cancelasync",
+              "locale"
+            ]
+        },
+        "defines": ["__ATTRP_C11_THREAD"]
+    },
+    {
+        "file": "libc.h",
+        "structs": {
+            "libc": [
+              "global_locale"
+            ]
+        }
+    }
+]

@@ -10,20 +10,21 @@ import logging
 TAG = 'version_1'
 HASH = 'a19ede8a4339f2745a490c22f3893899e1a5eae9d2b270e49d88d3a85239fbbaa26c9a352d0e6fb8bb69b4f45bd00c1ae9eff29b60cf03e79c5df45a4409992f'
 
+deps = ['zlib']
+
+
+def needed(settings):
+  return settings.USE_LIBPNG
+
 
 def get(ports, settings, shared):
-  if settings.USE_LIBPNG != 1:
-    return []
-
   ports.fetch_project('libpng', 'https://github.com/emscripten-ports/libpng/archive/' + TAG + '.zip', 'libpng-' + TAG, sha512hash=HASH)
 
-  libname = ports.get_lib_name('libpng')
-
-  def create():
+  def create(final):
     logging.info('building port: libpng')
 
     source_path = os.path.join(ports.get_dir(), 'libpng', 'libpng-' + TAG)
-    dest_path = os.path.join(shared.Cache.get_path('ports-builds'), 'libpng')
+    dest_path = os.path.join(ports.get_build_dir(), 'libpng')
 
     shutil.rmtree(dest_path, ignore_errors=True)
     shutil.copytree(source_path, dest_path)
@@ -31,26 +32,21 @@ def get(ports, settings, shared):
     open(os.path.join(dest_path, 'pnglibconf.h'), 'w').write(pnglibconf_h)
     ports.install_headers(dest_path)
 
-    final = os.path.join(ports.get_build_dir(), 'libpng', libname)
     ports.build_port(dest_path, final, flags=['-s', 'USE_ZLIB=1'], exclude_files=['pngtest'], exclude_dirs=['scripts', 'contrib'])
-    return final
 
-  return [shared.Cache.get(libname, create, what='port')]
+  return [shared.Cache.get_lib('libpng.a', create, what='port')]
 
 
-def clear(ports, shared):
-  shared.Cache.erase_file(ports.get_lib_name('libpng'))
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib('libpng.a')
 
 
 def process_dependencies(settings):
-  if settings.USE_LIBPNG == 1:
-    settings.USE_ZLIB = 1
+  settings.USE_ZLIB = 1
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_LIBPNG == 1:
-    get(ports, settings, shared)
-  return args
+def process_args(ports):
+  return []
 
 
 def show():

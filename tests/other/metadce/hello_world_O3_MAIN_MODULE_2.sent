@@ -1,3 +1,4 @@
+__indirect_function_table
 __memory_base
 __stack_pointer
 __table_base
@@ -5,4 +6,4 @@ emscripten_memcpy_big
 emscripten_resize_heap
 fd_write
 memory
-table
+setTempRet0

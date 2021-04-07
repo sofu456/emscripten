@@ -13,7 +13,7 @@
 if (!performance.realNow) {
   var isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
   if (isSafari) {
-    realPerformance = performance;
+    var realPerformance = performance;
     performance = {
       realNow: function() { return realPerformance.now(); },
       now: function() { return realPerformance.now(); }
@@ -87,9 +87,13 @@ var emscriptenCpuProfiler = {
       var minDt = 99999999;
       var maxDt = 0;
       var nSamples = 0;
-      for (var i = 0; i < this.timeSpentInMainloop.length; ++i) {
-        var dt = this.timeSpentInMainloop[i] + this.timeSpentOutsideMainloop[i];
-        totalRAFDt += this.timeSpentInMainloop[i];
+
+      var numSamplesToAccount = Math.min(this.timeSpentInMainloop.length, 120);
+      var startX = (this.currentHistogramX - numSamplesToAccount + this.canvas.width) % this.canvas.width;
+      for (var i = 0; i < numSamplesToAccount; ++i) {
+        var x = (startX + i) % this.canvas.width;
+        var dt = this.timeSpentInMainloop[x] + this.timeSpentOutsideMainloop[x];
+        totalRAFDt += this.timeSpentInMainloop[x];
         if (dt > 0) ++nSamples;
         totalDt += dt;
         minDt = Math.min(minDt, dt);
@@ -98,8 +102,9 @@ var emscriptenCpuProfiler = {
       var avgDt = totalDt / nSamples;
       var avgFps = 1000.0 / avgDt;
       var dtVariance = 0;
-      for (var i = 1; i < this.timeSpentInMainloop.length; ++i) {
-        var dt = this.timeSpentInMainloop[i] + this.timeSpentOutsideMainloop[i];
+      for (var i = 1; i < numSamplesToAccount; ++i) {
+        var x = (startX + i) % this.canvas.width;
+        var dt = this.timeSpentInMainloop[x] + this.timeSpentOutsideMainloop[x];
         var d = dt - avgDt;
         dtVariance += d*d;
       }
@@ -110,14 +115,15 @@ var emscriptenCpuProfiler = {
       // Compute the overhead added by WebGL:
       var hotGL = this.sections[0];
       var coldGL = this.sections[1];
-      var webGLMSecsInsideMainLoop = (hotGL ? hotGL.accumulatedFrameTimeInsideMainLoop() : 0) + (coldGL ? coldGL.accumulatedFrameTimeInsideMainLoop() : 0);
-      var webGLMSecsOutsideMainLoop = (hotGL ? hotGL.accumulatedFrameTimeOutsideMainLoop() : 0) + (coldGL ? coldGL.accumulatedFrameTimeOutsideMainLoop() : 0);
+      var webGLMSecsInsideMainLoop = (hotGL ? hotGL.accumulatedFrameTimeInsideMainLoop(startX, numSamplesToAccount) : 0) + (coldGL ? coldGL.accumulatedFrameTimeInsideMainLoop(startX, numSamplesToAccount) : 0);
+      var webGLMSecsOutsideMainLoop = (hotGL ? hotGL.accumulatedFrameTimeOutsideMainLoop(startX, numSamplesToAccount) : 0) + (coldGL ? coldGL.accumulatedFrameTimeOutsideMainLoop(startX, numSamplesToAccount) : 0);
       var webGLMSecs = webGLMSecsInsideMainLoop + webGLMSecsOutsideMainLoop;
 
       var setIntervalSection = this.sections[2];
       var setTimeoutSection = this.sections[3];
-      var totalCPUMsecs = totalRAFDt + setIntervalSection.accumulatedFrameTimeOutsideMainLoop() + setTimeoutSection.accumulatedFrameTimeOutsideMainLoop();
+      var totalCPUMsecs = totalRAFDt + setIntervalSection.accumulatedFrameTimeOutsideMainLoop(startX, numSamplesToAccount) + setTimeoutSection.accumulatedFrameTimeOutsideMainLoop(startX, numSamplesToAccount);
 
+      // Update full FPS counter
       var str = 'Last FPS: ' + fps.toFixed(2) + ', avg FPS:' + avgFps.toFixed(2) + ', min/avg/max dt: '
        + minDt.toFixed(2) + '/' + avgDt.toFixed(2) + '/' + maxDt.toFixed(2) + ' msecs, dt variance: ' + dtVariance.toFixed(3)
        + ', JavaScript CPU load: ' + asmJSLoad.toFixed(2) + '%';
@@ -125,8 +131,15 @@ var emscriptenCpuProfiler = {
       if (hotGL || coldGL) {
         str += '. WebGL CPU load: ' + (webGLMSecs * 100.0 / totalDt).toFixed(2) + '% (' + (webGLMSecs * 100.0 / totalCPUMsecs).toFixed(2) + '% of all CPU work)';
       }
-
       document.getElementById('fpsResult').innerHTML = str;
+
+      // Update lite FPS counter
+      if (this.fpsOverlay1) {
+        this.fpsOverlay1.innerText = fps.toFixed(1) + ' (' + asmJSLoad.toFixed(1) + '%)';
+        this.fpsOverlay1.style.color = fps >= 30 ? 'lightgreen' : fps >= 15 ? 'yellow' : 'red';
+        this.fpsOverlay2.innerText = minDt.toFixed(2) + '/' + avgDt.toFixed(2) + '/' + maxDt.toFixed(2) + ' ms';
+      }
+
       this.fpsCounterLastPrint = now;
     }
   },
@@ -146,14 +159,22 @@ var emscriptenCpuProfiler = {
         frametimesOutsideMainLoop: [],
         drawColor: drawColor,
         traceable: traceable,
-        accumulatedFrameTimeInsideMainLoop: function() {
+        accumulatedFrameTimeInsideMainLoop: function(startX, numSamples) {
           var total = 0;
-          for(var i = 0; i < this.frametimesInsideMainLoop.length; ++i) if (this.frametimesInsideMainLoop[i]) total += this.frametimesInsideMainLoop[i];
+          numSamples = Math.min(numSamples, this.frametimesInsideMainLoop.length);
+          for (var i = 0; i < numSamples; ++i) {
+            var x = (startX + i) % this.frametimesInsideMainLoop.length;
+            if (this.frametimesInsideMainLoop[x]) total += this.frametimesInsideMainLoop[x];
+          }
           return total;
         },
-        accumulatedFrameTimeOutsideMainLoop: function() {
+        accumulatedFrameTimeOutsideMainLoop: function(startX, numSamples) {
           var total = 0;
-          for(var i = 0; i < this.frametimesOutsideMainLoop.length; ++i) if (this.frametimesOutsideMainLoop[i]) total += this.frametimesOutsideMainLoop[i];
+          numSamples = Math.min(numSamples, this.frametimesInsideMainLoop.length);
+          for (var i = 0; i < numSamples; ++i) {
+            var x = (startX + i) % this.frametimesInsideMainLoop.length;
+            if (this.frametimesOutsideMainLoop[x]) total += this.frametimesOutsideMainLoop[x];
+          }
           return total;
         }
       };
@@ -180,7 +201,7 @@ var emscriptenCpuProfiler = {
       if (sect.traceable && timeInSection > this.logWebGLCallsSlowerThan) {
         var funcs = new Error().stack.toString().split('\n');
         var cs = '';
-        for(var i = 2; i < 5 && i < funcs.length; ++i) {
+        for (var i = 2; i < 5 && i < funcs.length; ++i) {
           if (i != 2) cs += ' <- ';
           var fn = funcs[i];
           var at = fn.indexOf('@');
@@ -211,7 +232,7 @@ var emscriptenCpuProfiler = {
     if (this.insideMainLoopRecursionCounter != 0) return;
 
     // Aggregate total times spent in each section to memory store to wait until the next stats UI redraw period.
-    for(var i = 0; i < this.sections.length; ++i) {
+    for (var i = 0; i < this.sections.length; ++i) {
       var sect = this.sections[i];
       if (!sect) continue;
       sect.frametimesInsideMainLoop[this.currentHistogramX] = sect.accumulatedTimeInsideMainLoop;
@@ -276,9 +297,9 @@ var emscriptenCpuProfiler = {
 
     // Create the UI display if it doesn't yet exist. If you want to customize the location/style of the cpuprofiler UI,
     // you can manually create this beforehand.
-    cpuprofiler = document.getElementById('cpuprofiler');
+    var cpuprofiler = document.getElementById('cpuprofiler');
     if (!cpuprofiler) {
-      var css = '.colorbox { border: solid 1px black; margin-left: 10px; margin-right: 3px; display: inline-block; width: 20px; height: 10px; }';
+      var css = '.colorbox { border: solid 1px black; margin-left: 10px; margin-right: 3px; display: inline-block; width: 20px; height: 10px; }  .hastooltip:hover .tooltip { display: block; } .tooltip { display: none; background: #FFFFFF; margin-left: 28px; padding: 5px; position: absolute; z-index: 1000; width:200px; } .hastooltip { margin:0px; }';
       var style = document.createElement('style');
       style.type = 'text/css';
       style.appendChild(document.createTextNode(css));
@@ -337,6 +358,32 @@ var emscriptenCpuProfiler = {
     this.canvas.width = document.documentElement.clientWidth - 32;
     this.drawContext = this.canvas.getContext('2d');
 
+    var webglCanvas = document.getElementById('canvas') || document.querySelector('canvas');
+
+    if (webglCanvas) {
+      // Create lite FPS overlay element
+      var fpsOverlay = document.createElement('div');
+      fpsOverlay.classList.add("hastooltip");
+      fpsOverlay.innerHTML = '<div id="fpsOverlay1" style="font-size: 1.5em; color: lightgreen; text-shadow: 3px 3px black;"></div><div id="fpsOverlay2" style="font-size: 1em; color: lightgrey; text-shadow: 3px 3px black;"></div> <span class="tooltip">FPS (CPU usage %)<br>Min/Avg/Max frame times (msecs)</span>';
+      fpsOverlay.style = 'position: fixed; font-weight: bold; padding: 3px; -webkit-touch-callout: none; -webkit-user-select: none; -khtml-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; cursor: pointer;';
+      fpsOverlay.onclick = function() { var view = document.getElementById('cpuprofiler_canvas'); if (view) view.scrollIntoView(); }
+      fpsOverlay.oncontextmenu = function(e) { e.preventDefault(); };
+      document.body.appendChild(fpsOverlay);
+      this.fpsOverlay1 = document.getElementById('fpsOverlay1');
+      this.fpsOverlay2 = document.getElementById('fpsOverlay2');
+      function positionOverlay() {
+        var rect = webglCanvas.getBoundingClientRect();
+        var overlayHeight = fpsOverlay.getBoundingClientRect().height || fpsOverlay.height;
+        fpsOverlay.height = overlayHeight; // Remember the overlay height when it was visible, if it is hidden.
+        fpsOverlay.style.display = (rect.bottom >= overlayHeight) ? 'block' : 'none';
+        fpsOverlay.style.top = Math.max(rect.top, 0) + 'px';
+        fpsOverlay.style.left = Math.max(rect.left, 0) + 'px';
+      }
+      setTimeout(positionOverlay, 100);
+      setInterval(positionOverlay, 5000);
+      window.addEventListener('scroll', positionOverlay);
+    }
+
     this.clearUi(0, this.canvas.width);
     this.drawGraphLabels();
     this.updateUi();
@@ -370,7 +417,7 @@ var emscriptenCpuProfiler = {
 
   drawBar: function drawBar(x) {
     var timeSpentInSectionsInsideMainLoop = 0;
-    for(var i = 0; i < this.sections.length; ++i) {
+    for (var i = 0; i < this.sections.length; ++i) {
       var sect = this.sections[i];
       if (!sect) continue;
       timeSpentInSectionsInsideMainLoop += sect.frametimesInsideMainLoop[x];
@@ -381,15 +428,15 @@ var emscriptenCpuProfiler = {
     y -= h;
     this.drawContext.fillStyle = this.colorCpuTimeSpentInUserCode;
     this.drawContext.fillRect(x, y, 1, h);
-    for(var i = 0; i < this.sections.length; ++i) {
+    for (var i = 0; i < this.sections.length; ++i) {
       var sect = this.sections[i];
       if (!sect) continue;
-      var h = (sect.frametimesInsideMainLoop[x] + sect.frametimesOutsideMainLoop[x]) * scale;
+      h = (sect.frametimesInsideMainLoop[x] + sect.frametimesOutsideMainLoop[x]) * scale;
       y -= h;
       this.drawContext.fillStyle = sect.drawColor;
       this.drawContext.fillRect(x, y, 1, h);
     }
-    var h = this.timeSpentOutsideMainloop[x] * scale;
+    h = this.timeSpentOutsideMainloop[x] * scale;
     y -= h;
     var fps60Limit = this.canvas.height - (16.666666666 + 1.0) * this.canvas.height / this.verticalTimeScale; // Be very lax, allow 1msec extra jitter.
     var fps30Limit = this.canvas.height - (33.333333333 + 1.0) * this.canvas.height / this.verticalTimeScale; // Be very lax, allow 1msec extra jitter.
@@ -478,7 +525,7 @@ var emscriptenCpuProfiler = {
     if (l9.indexOf(f) != -1) return 9;
     if (l10.indexOf(f) != -1) return 10;
     if (l11.indexOf(f) != -1) return 11;
-    throw 'Unexpected WebGL function ' + f;
+    console.warn('Unexpected WebGL function ' + f);
   },
 
   detectWebGLContext: function() {
@@ -519,7 +566,7 @@ var emscriptenCpuProfiler = {
     this.hookedWebGLContexts.splice(this.hookedWebGLContexts.indexOf(glCtx), 1);
     document.getElementById("toggle_webgl_profile").style.background = '#E1E1E1';
 
-    for(var f in glCtx) {
+    for (var f in glCtx) {
       if (typeof glCtx[f] !== 'function' || f.indexOf('real_') == 0) continue;
       var realf = 'real_' + f;
       glCtx[f] = glCtx[realf];
@@ -534,7 +581,7 @@ var emscriptenCpuProfiler = {
     glCtx[realf] = glCtx[f];
     var numArgs = this_.webGLFunctionLength(f); // On Firefox & Chrome, could do "glCtx[realf].length", but that doesn't work on Edge, which always reports 0.
     // Accessing 'arguments' is super slow, so to avoid overhead, statically reason the number of arguments.
-    switch(numArgs) {
+    switch (numArgs) {
       case 0: glCtx[f] = function webgl_0() { this_.enterSection(section); var ret = glCtx[realf](); this_.endSection(section); return ret; }; break;
       case 1: glCtx[f] = function webgl_1(a1) { this_.enterSection(section); var ret =  glCtx[realf](a1); this_.endSection(section); return ret; }; break;
       case 2: glCtx[f] = function webgl_2(a1, a2) { this_.enterSection(section); var ret =  glCtx[realf](a1, a2); this_.endSection(section); return ret; }; break;
@@ -569,7 +616,7 @@ var emscriptenCpuProfiler = {
     // Distinguishing between these two allows pinpointing locations of troublesome GL usage that might cause performance issues.
     this.createSection(0, 'Hot GL', this.colorHotGLFunction, /*traceable=*/true);
     this.createSection(1, 'Cold GL', this.colorColdGLFunction, /*traceable=*/true);
-    for(var f in glCtx) {
+    for (var f in glCtx) {
       if (typeof glCtx[f] !== 'function' || f.indexOf('real_') == 0) continue;
       this.hookWebGLFunction(f, glCtx);
     }
@@ -598,7 +645,7 @@ var emscriptenCpuProfiler = {
 
 // Hook into setInterval to be able to capture the time spent executing them.
 emscriptenCpuProfiler.createSection(2, 'setInterval', emscriptenCpuProfiler.colorSetIntervalSection, /*traceable=*/true);
-realSetInterval = setInterval;
+var realSetInterval = setInterval;
 setInterval = function(fn, delay) {
   function wrappedSetInterval() {
     emscriptenCpuProfiler.enterSection(2);
@@ -610,7 +657,7 @@ setInterval = function(fn, delay) {
 
 // Hook into setTimeout to be able to capture the time spent executing them.
 emscriptenCpuProfiler.createSection(3, 'setTimeout', emscriptenCpuProfiler.colorSetTimeoutSection, /*traceable=*/true);
-realSetTimeout = setTimeout;
+var realSetTimeout = setTimeout;
 setTimeout = function(fn, delay) {
   function wrappedSetTimeout() {
     emscriptenCpuProfiler.enterSection(3);

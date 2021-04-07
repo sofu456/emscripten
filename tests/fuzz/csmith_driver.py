@@ -8,7 +8,6 @@
 
 CSMITH_PATH should be set to something like /usr/local/include/csmith
 """
-from __future__ import print_function
 
 import os
 import sys
@@ -21,9 +20,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(os.path.dirname(os.path.dirname(script_dir))))
 
 from tools import shared
+from tools import config
 
 # can add flags like --no-threads --ion-offthread-compile=off
-engine = eval('shared.' + sys.argv[1]) if len(sys.argv) > 1 else shared.JS_ENGINES[0]
+engine = eval('config.' + sys.argv[1]) if len(sys.argv) > 1 else config.JS_ENGINES[0]
 
 print('testing js engine', engine)
 
@@ -54,10 +54,6 @@ while 1:
     else:
       opts = '-Oz'
   print('opt level:', opts)
-
-  llvm_opts = []
-  if random.random() < 0.5:
-    llvm_opts = ['--llvm-opts', str(random.randint(0, 3))]
 
   print('Tried %d, notes: %s' % (tried, notes))
   print('1) Generate source')
@@ -93,13 +89,13 @@ while 1:
   shared.run_process([COMP, fullname, '-o', filename + '3'] + CSMITH_CFLAGS + ['-w'])
   print('3) Run natively')
   try:
-    correct1 = shared.jsrun.timeout_run(Popen([filename + '1'], stdout=PIPE, stderr=PIPE), 3)
+    correct1 = shared.timeout_run(Popen([filename + '1'], stdout=PIPE, stderr=PIPE), 3)
     if 'Segmentation fault' in correct1 or len(correct1) < 10:
       raise Exception('segfault')
-    correct2 = shared.jsrun.timeout_run(Popen([filename + '2'], stdout=PIPE, stderr=PIPE), 3)
+    correct2 = shared.timeout_run(Popen([filename + '2'], stdout=PIPE, stderr=PIPE), 3)
     if 'Segmentation fault' in correct2 or len(correct2) < 10:
       raise Exception('segfault')
-    correct3 = shared.jsrun.timeout_run(Popen([filename + '3'], stdout=PIPE, stderr=PIPE), 3)
+    correct3 = shared.timeout_run(Popen([filename + '3'], stdout=PIPE, stderr=PIPE), 3)
     if 'Segmentation fault' in correct3 or len(correct3) < 10:
       raise Exception('segfault')
     if correct1 != correct3:
@@ -115,16 +111,10 @@ while 1:
 
   def try_js(args=[]):
     shared.try_delete(filename + '.js')
-    js_args = [shared.PYTHON, shared.EMCC, fullname, '-o', filename + '.js'] + [opts] + llvm_opts + CSMITH_CFLAGS + args + ['-w']
+    js_args = [shared.EMCC, fullname, '-o', filename + '.js'] + [opts] + CSMITH_CFLAGS + args + ['-w']
     if TEST_BINARYEN:
-      js_args += ['-s', 'BINARYEN=1', '-s', 'BINARYEN_TRAP_MODE="js"']
       if random.random() < 0.5:
         js_args += ['-g']
-      if random.random() < 0.1:
-        if random.random() < 0.5:
-          js_args += ['--js-opts', '0']
-        else:
-          js_args += ['--js-opts', '1']
       if random.random() < 0.5:
         # pick random passes
         BINARYEN_EXTRA_PASSES = [
@@ -158,21 +148,10 @@ while 1:
       js_args += ['-s', 'MAIN_MODULE=1']
     if random.random() < 0.25:
       js_args += ['-s', 'INLINING_LIMIT=1'] # inline nothing, for more call interaction
-    if random.random() < 0.01:
-      js_args += ['-s', 'EMTERPRETIFY=1']
-      if random.random() < 0.5:
-        if random.random() < 0.5:
-          js_args += ['-s', 'EMTERPRETIFY_BLACKLIST=["_main"]'] # blacklist main and all inlined into it, but interpret the rest, tests mixing
-        else:
-          js_args += ['-s', 'EMTERPRETIFY_WHITELIST=["_main"]'] # the opposite direction
-      if random.random() < 0.5:
-        js_args += ['-s', 'EMTERPRETIFY_ASYNC=1']
-    if random.random() < 0.5:
-      js_args += ["--memory-init-file", "0", "-s", "MEM_INIT_METHOD=2"]
     if random.random() < 0.5:
       js_args += ['-s', 'ASSERTIONS=1']
     print('(compile)', ' '.join(js_args))
-    short_args = [shared.PYTHON, shared.EMCC, fail_output_name] + js_args[5:]
+    short_args = [shared.EMCC, fail_output_name] + js_args[5:]
     escaped_short_args = map(lambda x: ("'" + x + "'") if '"' in x else x, short_args)
     open(fullname, 'a').write('\n// ' + ' '.join(escaped_short_args) + '\n\n')
     try:
@@ -185,8 +164,8 @@ while 1:
   def execute_js(engine):
     print('(run in %s)' % engine)
     try:
-      js = shared.jsrun.run_js(filename + '.js', engine=engine, check_timeout=True, assert_returncode=None)
-    except CalledProcessError:
+      js = shared.timeout_run(Popen(shared.NODE_JS + [filename + '.js'], stdout=PIPE, stderr=PIPE), 15 * 60)
+    except Exception:
       print('failed to run in primary')
       return False
     js = js.split('\n')[0] + '\n' # remove any extra printed stuff (node workarounds)

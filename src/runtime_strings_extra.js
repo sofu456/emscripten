@@ -39,7 +39,7 @@ var UTF16Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-16l
 #endif // TEXTDECODER
 #endif // TEXTDECODER == 2
 
-function UTF16ToString(ptr) {
+function UTF16ToString(ptr, maxBytesToRead) {
 #if ASSERTIONS
   assert(ptr % 2 == 0, 'Pointer passed to UTF16ToString must be aligned to two bytes!');
 #endif
@@ -48,7 +48,10 @@ function UTF16ToString(ptr) {
   // TextDecoder needs to know the byte length in advance, it doesn't stop on null terminator by itself.
   // Also, use the length info to avoid running tiny strings through TextDecoder, since .subarray() allocates garbage.
   var idx = endPtr >> 1;
-  while (HEAP16[idx]) ++idx;
+  var maxIdx = idx + maxBytesToRead / 2;
+  // If maxBytesToRead is not passed explicitly, it will be undefined, and this
+  // will always evaluate to true. This saves on code size.
+  while (!(idx >= maxIdx) && HEAPU16[idx]) ++idx;
   endPtr = idx << 1;
 
 #if TEXTDECODER != 2
@@ -59,16 +62,18 @@ function UTF16ToString(ptr) {
   } else {
 #endif // TEXTDECODER != 2
 #endif // TEXTDECODER
-    var i = 0;
-
     var str = '';
-    while (1) {
+
+    // If maxBytesToRead is not passed explicitly, it will be undefined, and the for-loop's condition
+    // will always evaluate to true. The loop is then terminated on the first null char.
+    for (var i = 0; !(i >= maxBytesToRead / 2); ++i) {
       var codeUnit = {{{ makeGetValue('ptr', 'i*2', 'i16') }}};
-      if (codeUnit == 0) return str;
-      ++i;
+      if (codeUnit == 0) break;
       // fromCharCode constructs a character from a UTF-16 code unit, so we can pass the UTF16 string right through.
       str += String.fromCharCode(codeUnit);
     }
+
+    return str;
 #if TEXTDECODER && TEXTDECODER != 2
   }
 #endif // TEXTDECODER
@@ -117,16 +122,18 @@ function lengthBytesUTF16(str) {
   return str.length*2;
 }
 
-function UTF32ToString(ptr) {
+function UTF32ToString(ptr, maxBytesToRead) {
 #if ASSERTIONS
   assert(ptr % 4 == 0, 'Pointer passed to UTF32ToString must be aligned to four bytes!');
 #endif
   var i = 0;
 
   var str = '';
-  while (1) {
+  // If maxBytesToRead is not passed explicitly, it will be undefined, and this
+  // will always evaluate to true. This saves on code size.
+  while (!(i >= maxBytesToRead / 4)) {
     var utf32 = {{{ makeGetValue('ptr', 'i*4', 'i32') }}};
-    if (utf32 == 0) return str;
+    if (utf32 == 0) break;
     ++i;
     // Gotcha: fromCharCode constructs a character from a UTF-16 encoded code (pair), not from a Unicode code point! So encode the code point to UTF-16 for constructing.
     // See http://unicode.org/faq/utf_bom.html#utf16-3
@@ -137,6 +144,7 @@ function UTF32ToString(ptr) {
       str += String.fromCharCode(utf32);
     }
   }
+  return str;
 }
 
 // Copies the given Javascript String object 'str' to the emscripten HEAP at address 'outPtr',
@@ -203,7 +211,7 @@ function lengthBytesUTF32(str) {
 // It is the responsibility of the caller to free() that memory.
 function allocateUTF8(str) {
   var size = lengthBytesUTF8(str) + 1;
-  var ret = _malloc(size);
+  var ret = {{{ makeMalloc('allocateUTF8', 'size') }}};
   if (ret) stringToUTF8Array(str, HEAP8, ret, size);
   return ret;
 }

@@ -66,8 +66,8 @@ In this mode (``-s LEGACY_GL_EMULATION=1``), there are a few extra flags that ca
 - ``-s GL_FFP_ONLY=1`` tells the GL emulation layer that your code will not use the programmable pipeline/shaders at all. This allows the GL emulation code to perform extra optimizations when it knows that it is safe to do so.
 - Add the ``Module.GL_MAX_TEXTURE_IMAGE_UNITS`` integer to your shell **.html** file to signal the maximum number of texture units used by the code. This ensures that the GL emulation layer does not waste clock cycles iterating over unused texture units when examining which Fixed Function Pipeline (FFP) emulation shader to run.
 
-What if my codebase depends on an desktop OpenGL feature that is currently unsupported?
----------------------------------------------------------------------------------------
+What if my codebase depends on a desktop OpenGL feature that is currently unsupported?
+--------------------------------------------------------------------------------------
 
 You can consider building the codebase against the `Regal <https://github.com/p3/regal>`_ Desktop OpenGL emulation library, which aims to support Desktop OpenGL features on top of OpenGL ES 2.0. This may work better or worse than Emscripten's GL emulation depending on the project.
 
@@ -83,9 +83,9 @@ When migrating from WebGL 1 to WebGL 2, take note that some WebGL 1 extensions a
 Test code/examples
 ==================
 
-The files in `tests/glbook <https://github.com/emscripten-core/emscripten/tree/master/tests/glbook>`_ provide a number of simple examples that use only the :ref:`opengl-support-webgl-subset`.
+The files in `tests/glbook <https://github.com/emscripten-core/emscripten/tree/main/tests/glbook>`_ provide a number of simple examples that use only the :ref:`opengl-support-webgl-subset`.
 
-The other modes are covered in various tests, including several in `tests/test_browser.py <https://github.com/emscripten-core/emscripten/blob/master/tests/test_browser.py>`_. The best way to locate the tests is to search the source code for the appropriate compiler flags: ``FULL_ES2``, ``LEGACY_GL_EMULATION`` etc.
+The other modes are covered in various tests, including several in `tests/test_browser.py <https://github.com/emscripten-core/emscripten/blob/main/tests/test_browser.py>`_. The best way to locate the tests is to search the source code for the appropriate compiler flags: ``FULL_ES2``, ``LEGACY_GL_EMULATION`` etc.
 
 Bug Reports
 ===========

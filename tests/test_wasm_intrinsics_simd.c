@@ -10,8 +10,6 @@ v128_t TESTFN i8x16_load(void *ptr) {
   return wasm_v128_load(ptr);
 }
 
-#ifdef __wasm_unimplemented_simd128__
-
 v128_t TESTFN v8x16_load_splat(void *ptr) {
   return wasm_v8x16_load_splat(ptr);
 }
@@ -42,8 +40,6 @@ v128_t TESTFN i64x2_load32x2_s(void *ptr) {
 v128_t TESTFN i64x2_load32x2_u(void *ptr) {
   return wasm_u64x2_load_32x2(ptr);
 }
-
-#endif // __wasm_unimplemented_simd128__
 
 void TESTFN i8x16_store(void *ptr, v128_t vec) {
   wasm_v128_store(ptr, vec);
@@ -106,13 +102,9 @@ v128_t TESTFN i64x2_shuffle_reverse(v128_t vec) {
   return wasm_v64x2_shuffle(vec, vec, 1, 0);
 }
 
-#ifdef __wasm_unimplemented_simd128__
-
 v128_t TESTFN v8x16_swizzle(v128_t x, v128_t y) {
   return wasm_v8x16_swizzle(x, y);
 }
-
-#endif // __wasm_unimplemented_simd128__
 
 v128_t TESTFN i8x16_splat(int32_t x) {
   return wasm_i8x16_splat(x);
@@ -363,13 +355,9 @@ v128_t TESTFN v128_xor(v128_t x, v128_t y) {
   return wasm_v128_xor(x, y);
 }
 
-#ifdef __wasm_unimplemented_simd128__
-
 v128_t TESTFN v128_andnot(v128_t x, v128_t y) {
   return wasm_v128_andnot(x, y);
 }
-
-#endif // __wasm_unimplemented_simd128__
 
 v128_t TESTFN v128_bitselect(v128_t x, v128_t y, v128_t cond) {
   return wasm_v128_bitselect(x, y, cond);
@@ -380,9 +368,9 @@ v128_t TESTFN i8x16_abs(v128_t vec) {
 v128_t TESTFN i8x16_neg(v128_t vec) {
   return wasm_i8x16_neg(vec);
 }
-int32_t TESTFN i8x16_any_true(v128_t vec) {
-  return wasm_i8x16_any_true(vec);
-}
+/* int32_t TESTFN i8x16_any_true(v128_t vec) { */
+/*   return wasm_i8x16_any_true(vec); */
+/* } */
 int32_t TESTFN i8x16_all_true(v128_t vec) {
   return wasm_i8x16_all_true(vec);
 }
@@ -413,15 +401,6 @@ v128_t TESTFN i8x16_sub_saturate_s(v128_t x, v128_t y) {
 v128_t TESTFN i8x16_sub_saturate_u(v128_t x, v128_t y) {
   return wasm_u8x16_sub_saturate(x, y);
 }
-
-#ifdef __wasm_unimplemented_simd128__
-
-v128_t TESTFN i8x16_mul(v128_t x, v128_t y) {
-  return wasm_i8x16_mul(x, y);
-}
-
-#endif // __wasm_unimplemented_simd128__
-
 v128_t TESTFN i8x16_min_s(v128_t x, v128_t y) {
   return wasm_i8x16_min(x, y);
 }
@@ -442,9 +421,6 @@ v128_t TESTFN i16x8_abs(v128_t vec) {
 }
 v128_t TESTFN i16x8_neg(v128_t vec) {
   return wasm_i16x8_neg(vec);
-}
-bool TESTFN i16x8_any_true(v128_t vec) {
-  return wasm_i16x8_any_true(vec);
 }
 bool TESTFN i16x8_all_true(v128_t vec) {
   return wasm_i16x8_all_true(vec);
@@ -500,9 +476,6 @@ v128_t TESTFN i32x4_abs(v128_t vec) {
 v128_t TESTFN i32x4_neg(v128_t vec) {
   return wasm_i32x4_neg(vec);
 }
-int32_t TESTFN i32x4_any_true(v128_t vec) {
-  return wasm_i32x4_any_true(vec);
-}
 int32_t TESTFN i32x4_all_true(v128_t vec) {
   return wasm_i32x4_all_true(vec);
 }
@@ -539,18 +512,6 @@ v128_t TESTFN i32x4_mul(v128_t x, v128_t y) {
 v128_t TESTFN i64x2_neg(v128_t vec) {
   return wasm_i64x2_neg(vec);
 }
-
-#ifdef __wasm_unimplemented_simd128__
-
-bool TESTFN i64x2_any_true(v128_t vec) {
-  return wasm_i64x2_any_true(vec);
-}
-bool TESTFN i64x2_all_true(v128_t vec) {
-  return wasm_i64x2_all_true(vec);
-}
-
-#endif // __wasm_unimplemented_simd128__
-
 v128_t TESTFN i64x2_shl(v128_t vec, int32_t shift) {
   return wasm_i64x2_shl(vec, shift);
 }
@@ -575,18 +536,6 @@ v128_t TESTFN f32x4_neg(v128_t vec) {
 v128_t TESTFN f32x4_sqrt(v128_t vec) {
   return wasm_f32x4_sqrt(vec);
 }
-
-#ifdef __wasm_unimplemented_simd128__
-
-v128_t TESTFN f32x4_qfma(v128_t a, v128_t b, v128_t c) {
-  return wasm_f32x4_qfma(a, b, c);
-}
-v128_t TESTFN f32x4_qfms(v128_t a, v128_t b, v128_t c) {
-  return wasm_f32x4_qfms(a, b, c);
-}
-
-#endif // __wasm_unimplemented_simd128__
-
 v128_t TESTFN f32x4_add(v128_t x, v128_t y) {
   return wasm_f32x4_add(x, y);
 }
@@ -614,18 +563,6 @@ v128_t TESTFN f64x2_neg(v128_t vec) {
 v128_t TESTFN f64x2_sqrt(v128_t vec) {
   return wasm_f64x2_sqrt(vec);
 }
-
-#ifdef __wasm_unimplemented_simd128__
-
-v128_t TESTFN f64x2_qfma(v128_t a, v128_t b, v128_t c) {
-  return wasm_f64x2_qfma(a, b, c);
-}
-v128_t TESTFN f64x2_qfms(v128_t a, v128_t b, v128_t c) {
-  return wasm_f64x2_qfms(a, b, c);
-}
-
-#endif // __wasm_unimplemented_simd128__
-
 v128_t TESTFN f64x2_add(v128_t x, v128_t y) {
   return wasm_f64x2_add(x, y);
 }
@@ -810,8 +747,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
                i8x16(7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7));
   }
 
-#ifdef __wasm_unimplemented_simd128__
-
   {
     char vec[8] = {0x80, 0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0};
     void *ptr = &vec;
@@ -852,8 +787,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     );
   }
 
-#endif // __wasm_unimplemented_simd128__
-
   expect_vec(i8x16_const(), u8x16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16));
   expect_vec(i16x8_const(), u16x8(1, 2, 3, 4, 5, 6, 7, 8));
   expect_vec(i32x4_const(), u32x4(1, 2, 3, 4));
@@ -882,8 +815,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
   expect_vec(i32x4_shuffle_reverse((v128_t)i32x4(1, 2, 3, 4)), i32x4(4, 3, 2, 1));
   expect_vec(i64x2_shuffle_reverse((v128_t)i64x2(1, 2)), i64x2(2, 1));
 
-#ifdef  __wasm_unimplemented_simd128__
-
   expect_vec(
     v8x16_swizzle(
       (v128_t)i8x16(0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
@@ -893,8 +824,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     i8x16(0xf0, 0xf4, 0xf8, 0xfc, 0x00, 0x00, 0x00, 0x00,
           0x00, 0x00, 0xff, 0xfd, 0xfc, 0xf8, 0xf4, 0xf0)
   );
-
-#endif // __wasm_unimplemented_simd128__
 
   // i8x16 lane accesses
   expect_vec(i8x16_splat(5), i8x16(5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5));
@@ -1275,16 +1204,10 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     v128_xor((v128_t)i32x4(0, 0, -1, -1), (v128_t)i32x4(0, -1, 0, -1)),
     i32x4(0, -1, -1, 0)
   );
-
-#ifdef __wasm_unimplemented_simd128__
-
   expect_vec(
     v128_andnot((v128_t)i32x4(0, 0, -1, -1), (v128_t)i32x4(0, -1, 0, -1)),
-    i32x4(0, -1, -1, 0)
+    i32x4(0, 0, -1, 0)
   );
-
-#endif // __wasm_unimplemented_simd128__
-
   expect_vec(
     v128_bitselect(
       (v128_t)i32x4(0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA, 0xAAAAAAAA),
@@ -1303,10 +1226,10 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     i8x16_neg((v128_t)i8x16(0, 1, 42, -3, -56, 127, -128, -126, 0, -1, -42, 3, 56, -127, -128, 126)),
     i8x16(0, -1, -42, 3, 56, -127, -128, 126, 0, 1, 42, -3, -56, 127, -128, -126)
   );
-  expect_eq(i8x16_any_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), 0);
-  expect_eq(i8x16_any_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)), 1);
-  expect_eq(i8x16_any_true((v128_t)i8x16(1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)), 1);
-  expect_eq(i8x16_any_true((v128_t)i8x16(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)), 1);
+  /* expect_eq(i8x16_any_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), 0); */
+  /* expect_eq(i8x16_any_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)), 1); */
+  /* expect_eq(i8x16_any_true((v128_t)i8x16(1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)), 1); */
+  /* expect_eq(i8x16_any_true((v128_t)i8x16(1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)), 1); */
   expect_eq(i8x16_all_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), 0);
   expect_eq(i8x16_all_true((v128_t)i8x16(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0)), 0);
   expect_eq(i8x16_all_true((v128_t)i8x16(1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1)), 0);
@@ -1377,19 +1300,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     ),
     u8x16(0, 0, 254, 0, 0, 123, 0, 12, 61, 167, 158, 100, 17, 0, 0, 0)
   );
-
-#ifdef __wasm_unimplemented_simd128__
-
-  expect_vec(
-    i8x16_mul(
-      (v128_t)i8x16(0, 42, 255, 128, 127, 129, 6, 29, 103, 196, 231, 142, 17, 250, 1, 73),
-      (v128_t)i8x16(3, 231, 1, 128, 129, 6, 103, 17, 42, 29, 73, 42, 0, 255, 127, 142)
-    ),
-    i8x16(0, 230, 255, 0, 255, 6, 106, 237, 230, 52, 223, 76, 0, 6, 127, 126)
-  );
-
-#endif // __wasm_unimplemented_simd128__
-
   expect_vec(
     i8x16_min_s(
       (v128_t)i8x16(0, 42, 255, 128, 127, 129, 6, 29, 103, 196, 231, 142, 17, 250, 1, 73),
@@ -1435,10 +1345,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     i16x8_neg((v128_t)i16x8(0, 1, 42, -3, -56, 32767, -32768, 32766)),
     i16x8(0, -1, -42, 3, 56, -32767, -32768, -32766)
   );
-  expect_eq(i16x8_any_true((v128_t)i16x8(0, 0, 0, 0, 0, 0, 0, 0)), 0);
-  expect_eq(i16x8_any_true((v128_t)i16x8(0, 0, 1, 0, 0, 0, 0, 0)), 1);
-  expect_eq(i16x8_any_true((v128_t)i16x8(1, 1, 1, 1, 1, 0, 1, 1)), 1);
-  expect_eq(i16x8_any_true((v128_t)i16x8(1, 1, 1, 1, 1, 1, 1, 1)), 1);
   expect_eq(i16x8_all_true((v128_t)i16x8(0, 0, 0, 0, 0, 0, 0, 0)), 0);
   expect_eq(i16x8_all_true((v128_t)i16x8(0, 0, 1, 0, 0, 0, 0, 0)), 0);
   expect_eq(i16x8_all_true((v128_t)i16x8(1, 1, 1, 1, 1, 0, 1, 1)), 0);
@@ -1561,10 +1467,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
     i32x4_neg((v128_t)i32x4(0, 1, 0x80000000, 0x80000001)),
     i32x4(0, -1, 0x80000000, 0x7fffffff)
   );
-  expect_eq(i32x4_any_true((v128_t)i32x4(0, 0, 0, 0)), 0);
-  expect_eq(i32x4_any_true((v128_t)i32x4(0, 0, 1, 0)), 1);
-  expect_eq(i32x4_any_true((v128_t)i32x4(1, 0, 1, 1)), 1);
-  expect_eq(i32x4_any_true((v128_t)i32x4(1, 1, 1, 1)), 1);
   expect_eq(i32x4_all_true((v128_t)i32x4(0, 0, 0, 0)), 0);
   expect_eq(i32x4_all_true((v128_t)i32x4(0, 0, 1, 0)), 0);
   expect_eq(i32x4_all_true((v128_t)i32x4(1, 0, 1, 1)), 0);
@@ -1624,12 +1526,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
 
   // i64x2 arithmetic
   expect_vec(i64x2_neg((v128_t)i64x2(0x8000000000000000, 42)), i64x2(0x8000000000000000, -42));
-  /* expect_eq(i64x2_any_true((v128_t)i64x2(0, 0)), 0); */
-  /* expect_eq(i64x2_any_true((v128_t)i64x2(1, 0)), 1); */
-  /* expect_eq(i64x2_any_true((v128_t)i64x2(1, 1)), 1); */
-  /* expect_eq(i64x2_all_true((v128_t)i64x2(0, 0)), 0); */
-  /* expect_eq(i64x2_all_true((v128_t)i64x2(1, 0)), 0); */
-  /* expect_eq(i64x2_all_true((v128_t)i64x2(1, 1)), 1); */
 
   expect_vec(i64x2_shl((v128_t)i64x2(1, 0x8000000000000000), 1), i64x2(2, 0));
   expect_vec(i64x2_shl((v128_t)i64x2(1, 0x8000000000000000), 64), i64x2(1, 0x8000000000000000));
@@ -1650,7 +1546,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
   expect_vec(f32x4_abs((v128_t)f32x4(-0., NAN, -INFINITY, 5)), f32x4(0, NAN, INFINITY, 5));
   expect_vec(f32x4_neg((v128_t)f32x4(-0., NAN, -INFINITY, 5)), f32x4(0, -NAN, INFINITY, -5));
   expect_vec(f32x4_sqrt((v128_t)f32x4(0., NAN, INFINITY, 4)), f32x4(-0., NAN, INFINITY, 2));
-  // TODO: test QFMA/QFMS
   expect_vec(
     f32x4_add((v128_t)f32x4(NAN, -NAN, INFINITY, 42), (v128_t)f32x4(42, INFINITY, INFINITY, 1)),
     f32x4(NAN, -NAN, INFINITY, 43)
@@ -1681,10 +1576,6 @@ int EMSCRIPTEN_KEEPALIVE __attribute__((__optnone__)) main(int argc, char** argv
   expect_vec(f64x2_abs((v128_t)f64x2(-INFINITY, 5)), f64x2(INFINITY, 5));
   expect_vec(f64x2_neg((v128_t)f64x2(-0., NAN)), f64x2(0, -NAN));
   expect_vec(f64x2_neg((v128_t)f64x2(-INFINITY, 5)), f64x2(INFINITY, -5));
-  // TODO: test QFMA/QFMS
-  // https://bugs.chromium.org/p/v8/issues/detail?id=10170
-  //  expect_vec(f64x2_sqrt((v128_t)f64x2(-0., NAN)), f64x2(-0., NAN));
-  //expect_vec(f64x2_sqrt((v128_t)f64x2(INFINITY, 4)), f64x2(INFINITY, 2));
   expect_vec(
     f64x2_add((v128_t)f64x2(NAN, -NAN), (v128_t)f64x2(42, INFINITY)),
     f64x2(NAN, -NAN)

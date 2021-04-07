@@ -49,10 +49,6 @@ def generate_minimal_runtime_load_statement(target_basename):
       then_statements += ["Module.mem = r[%d];" % len(files_to_load)]
     files_to_load += ["binary('%s')" % (target_basename + '.mem')]
 
-  # Download separate .asm.fs file when building with --separate-asm
-  if shared.Settings.SEPARATE_ASM:
-    files_to_load += ["script('%s')" % (target_basename + '.asm.js')]
-
   # Download .wasm file
   if shared.Settings.WASM == 1 or not download_wasm:
     if shared.Settings.MODULARIZE:
@@ -158,9 +154,7 @@ def generate_minimal_runtime_load_statement(target_basename):
   return load
 
 
-def generate_minimal_runtime_html(target, options, js_target, target_basename,
-                                  asm_target, wasm_binary_target,
-                                  memfile, optimizer):
+def generate_minimal_runtime_html(target, options, js_target, target_basename):
   logger.debug('generating HTML for minimal runtime')
   shell = open(options.shell_path, 'r').read()
   if shared.Settings.SINGLE_FILE:
@@ -189,5 +183,6 @@ def generate_minimal_runtime_html(target, options, js_target, target_basename,
     js_contents = ''
   shell = shell.replace('{{{ JS_CONTENTS_IN_SINGLE_FILE_BUILD }}}', js_contents)
   shell = line_endings.convert_line_endings(shell, '\n', options.output_eol)
+  # Force UTF-8 output for consistency across platforms and with the web.
   with open(target, 'wb') as f:
-    f.write(shared.asbytes(shell))
+    f.write(shell.encode('utf-8'))

@@ -10,17 +10,18 @@ TAG = 'version_1'
 HASH = '0d0b1280ba0501ad0a23cf1daa1f86821c722218b59432734d3087a89acd22aabd5c3e5e1269700dcd41e87073046e906060f167c032eb91a3ac8c5808a02783'
 
 
-def get(ports, settings, shared):
-  if settings.USE_FREETYPE != 1:
-    return []
+def needed(settings):
+  return settings.USE_FREETYPE
 
+
+def get(ports, settings, shared):
   ports.fetch_project('freetype', 'https://github.com/emscripten-ports/FreeType/archive/' + TAG + '.zip', 'FreeType-' + TAG, sha512hash=HASH)
 
-  def create():
+  def create(final):
     ports.clear_project_build('freetype')
 
     source_path = os.path.join(ports.get_dir(), 'freetype', 'FreeType-' + TAG)
-    dest_path = os.path.join(shared.Cache.get_path('ports-builds'), 'freetype')
+    dest_path = os.path.join(ports.get_build_dir(), 'freetype')
     shared.try_delete(dest_path)
     os.makedirs(dest_path)
     shutil.rmtree(dest_path, ignore_errors=True)
@@ -85,7 +86,7 @@ def get(ports, settings, shared):
     for src in srcs:
       o = os.path.join(ports.get_build_dir(), 'freetype', src + '.o')
       shared.safe_ensure_dirs(os.path.dirname(o))
-      commands.append([shared.PYTHON, shared.EMCC, '-c', os.path.join(dest_path, src), '-o', o,
+      commands.append([shared.EMCC, '-c', os.path.join(dest_path, src), '-o', o,
                        '-DFT2_BUILD_LIBRARY', '-O2',
                        '-I' + dest_path + '/include',
                        '-I' + dest_path + '/truetype',
@@ -100,27 +101,21 @@ def get(ports, settings, shared):
       o_s.append(o)
 
     ports.run_commands(commands)
-    final = os.path.join(ports.get_build_dir(), 'freetype', 'libfreetype.a')
     shared.try_delete(final)
     shared.run_process([shared.LLVM_AR, 'rc', final] + o_s)
 
     ports.install_header_dir(os.path.join(dest_path, 'include'),
                              target=os.path.join('freetype2', 'freetype'))
-    return final
 
-  return [shared.Cache.get('libfreetype.a', create, what='port')]
-
-
-def clear(ports, shared):
-  shared.Cache.erase_file('libfreetype.a')
+  return [shared.Cache.get_lib('libfreetype.a', create, what='port')]
 
 
-def process_args(ports, args, settings, shared):
-  if settings.USE_FREETYPE == 1:
-    get(ports, settings, shared)
-    args += ['-I' + os.path.join(ports.get_include_dir(), 'freetype2', 'freetype')]
+def clear(ports, settings, shared):
+  shared.Cache.erase_lib('libfreetype.a')
 
-  return args
+
+def process_args(ports):
+  return ['-I' + os.path.join(ports.get_include_dir(), 'freetype2', 'freetype')]
 
 
 def show():
